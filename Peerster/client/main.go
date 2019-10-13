@@ -47,7 +47,7 @@ func main() {
 	defer conn.Close()
 
 	// Create a gossiper msg
-	pkt := GossipPacket{
+	pkt := &GossipPacket{
 			&SimpleMessage{
 			OriginalName : "client",
 			RelayPeerAddr : "",
@@ -56,7 +56,7 @@ func main() {
 		}
 
 	// Encode the msg
-	msg_bytes, err := protobuf.Encode(pkt.Simple)
+	msg_bytes, err := protobuf.Encode(pkt)
 
 	if err != nil {
 
@@ -64,6 +64,7 @@ func main() {
 	}
 
 	// Send the msg to the server
+	fmt.Println("Sending to gossiper")
 	conn.Write(msg_bytes)
 
 	return

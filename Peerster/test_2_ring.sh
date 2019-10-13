@@ -8,7 +8,7 @@ cd ..
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 NC='\033[0m'
-DEBUG="false"
+DEBUG="true"
 
 outputFiles=()
 message_c1_1=Weather_is_clear
@@ -49,7 +49,7 @@ sleep 1
 ./client/client -UIPort=12346 -msg=$message_c2_2
 ./client/client -UIPort=12351 -msg=$message_c3
 
-sleep 5
+sleep 64
 pkill -f Peerster
 
 
