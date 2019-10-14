@@ -5,6 +5,11 @@ import (
 	"net"
 )
 /* Struct definition */
+type Message struct {
+
+	Text string
+}
+
 type SimpleMessage struct {
 
 	OriginalName string

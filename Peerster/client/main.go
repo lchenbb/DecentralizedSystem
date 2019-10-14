@@ -5,22 +5,11 @@ import (
 	"flag"
 	"net"
 	"github.com/dedis/protobuf"
+	"github.com/LiangweiCHEN/Peerster/message"
 )
 
 
 /* Struct definition */
-type SimpleMessage struct {
-
-	OriginalName string
-	RelayPeerAddr string
-	Contents string
-}
-
-type GossipPacket struct {
-
-	Simple *SimpleMessage
-}
-
 func input() (UIPort string, msg string) {
 
 	// Set cmd flag value containers
@@ -47,13 +36,9 @@ func main() {
 	defer conn.Close()
 
 	// Create a gossiper msg
-	pkt := &GossipPacket{
-			&SimpleMessage{
-			OriginalName : "client",
-			RelayPeerAddr : "",
-			Contents: msg,
-			},
-		}
+	pkt := &message.Message{
+		Text : msg,
+	}
 
 	// Encode the msg
 	msg_bytes, err := protobuf.Encode(pkt)

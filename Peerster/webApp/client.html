@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="en">
+
+<head>
+<script src="https://cdn.staticfile.org/jquery/1.10.2/jquery.min.js">
+</script>
+<script src="client.js"></script>
+<style>
+div.NodeBox {
+	width : 500px;
+	height: 500px;
+	overflow : auto;
+}
+
+
+div.container {
+  height: 100%;
+  width: 100%;
+  display: flex;
+}
+div.leftThing {
+  width: 25%;
+  background-color: blue;
+}
+div.content {
+  width: 50%;
+  background-color: green;
+}
+div.rightThing {
+  width: 25%;
+  background-color: yellow;
+}
+</style>
+</head>
+
+<body>
+	<div class="container">
+		<div class="leftThing">
+		<h2>ID</h2>
+		<div id="NodeID"></div>	
+		</div>
+
+		<div class="content">
+			<h2>Node Box</h2>
+			<div class="NodeBox" id="PeerBox">
+			Lorem ipsum dolor sit amet, consectetuer adipiscing elit, sed diam nonummy nibh euismod tincidunt ut laoreet dolore magna aliquam erat volutpat. Ut wisi enim ad minim veniam, quis nostrud exerci tation ullamcorper suscipit lobortis nisl ut aliquip ex ea commodo consequat. Duis autem vel eum iriure dolor in hendrerit in vulputate velit esse molestie consequat, vel illum dolore eu feugiat nulla facilisis at vero eros et accumsan et iusto odio dignissim qui blandit praesent luptatum zzril delenit augue duis dolore te feugait nulla facilisi. Nam liber tempor cum soluta nobis eleifend option congue nihil imperdiet doming id quod mazim placerat facer possim assum. Typi non habent claritatem insitam; est usus legentis in iis qui facit eorum claritatem. Investigationes demonstraverunt lectores legere me lius quod ii legunt saepius.
+			</div>
+		</div>
+
+		<div class="rightThing">
+			<h2>Msg list</h2>
+			<div id="MsgBox">
+			</div>
+		</div>
+</div>
+<div class="container">
+
+	<div class="leftThing" id="InputBox">
+		<h2>Input msg</h2>
+		<textarea id="InputMsg"></textarea>
+		<button id="InputBtn">Send</button>
+	</div>
+	<div class="rightThing">
+		<h2>Add peer</h2>
+		<textarea id="PeerAddr"></textarea>
+		<button id="PeerAddBtn">Add</button>
+	</div>
+	</div>
+
+
+</body>
