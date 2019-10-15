@@ -1,6 +1,6 @@
 $(document).ready(function(){
 
-	var guiport = "13081"
+	var guiport = "17345"
 	var url = "http://127.0.0.1:" + guiport + "/"
 	// Get id
 	$.ajax({
@@ -10,13 +10,13 @@ $(document).ready(function(){
 		success: function(json) {
 
 			console.log(json)
-			var ID = json.ID
+			var ID = json.id
 
 			$("#NodeID").append("<P>" + ID)
 		}
 	})
+
 	// Initialize buffer for msg and peernodes
-	$("body").append("<P>fawefrwaefewa")
 	var peer_addrs = new Array();
 	var rumors = new Array();
 
@@ -114,6 +114,14 @@ $(document).ready(function(){
 		// Refresh peer addr
 		$("#PeerAddr").val("");
 
+		var regExp = RegExp("((25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)");
+		console.log("New peer adding feature!!");
+		console.log(regExp.test(text));
+		if (!regExp.test(text)) {
+
+			alert("Bad IP address!!!");
+			return;
+		}
 		// Send new addr to server
 		var data = {addr : text};
 
@@ -124,7 +132,7 @@ $(document).ready(function(){
 			dataType: "json",
 			success: function(msg) {
 
-				alert("Successfully add peer")
+				alert("Successfully add peer");
 			}
 		});
 	});

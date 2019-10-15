@@ -58,9 +58,15 @@ type PeersBuffer struct {
 	Mux sync.Mutex
 }
 
+type PeerStatusAndSync struct {
+
+	PeerStatus *message.PeerStatus
+	IsSync bool
+}
+
 type Ack_chs struct {
 
-	Chs map[string]chan *message.PeerStatus
+	Chs map[string]chan *PeerStatusAndSync
 	Mux sync.Mutex
 }
 
@@ -70,12 +76,12 @@ type PeerStatuses struct {
 	Mux sync.Mutex
 }
 /** Global variable **/
-var UIPort, gossipAddr, name string
+var UIPort, GuiPort, gossipAddr, name string
 var peers []string
 var simple bool
 var antiEntropy int
 
-func input() (UIPort string, gossipAddr string, name string, peers []string, simple bool, antiEntropy int) {
+func input() (UIPort string, GuiPort string, gossipAddr string, name string, peers []string, simple bool, antiEntropy int) {
 
 	// Set flag value containers
 	flag.StringVar(&UIPort, "UIPort", "8080", "UI port num")
@@ -85,19 +91,23 @@ func input() (UIPort string, gossipAddr string, name string, peers []string, sim
 
 	flag.StringVar(&name, "name", "", "name of gossiper")
 
+
+	flag.StringVar(&GuiPort, "GuiPort", "", "GUI port, default to be UIPort + GossipPort")
 	var peers_str string
 
 	flag.StringVar(&peers_str, "peers", "", "list of peers")
 
 	flag.BoolVar(&simple, "simple", false, "Simple broadcast or not")
 
-	flag.IntVar(&antiEntropy, "antiEntropy", 1, "antiEntroypy trigger period")
+	flag.IntVar(&antiEntropy, "antiEntropy", 10, "antiEntroypy trigger period")
 	// Conduct parameter retreival
 	flag.Parse()
 
 	// Convert peers to slice
 	peers = strings.Split(peers_str, ",")
-
+	if peers[0] == "" {
+		peers = peers[1:]
+	}
 	return
 }
 
@@ -111,19 +121,20 @@ func InitGossiper(UIPort, gossipAddr, name string, simple bool, peers []string, 
 	client_addr, _ := net.ResolveUDPAddr("udp", ":" + UIPort)
 	client_conn, _ := net.ListenUDP("udp", client_addr)
 
-	// Set up GuiPort
-	GuiPort, _ := strconv.Atoi(UIPort) 
-	offset, _ := strconv.Atoi(strings.Split(gossipAddr, ":")[1])
-	GuiPort += offset
-	GuiPortStr := strconv.Itoa(GuiPort)
-
+	// Check whether need to use default GUIPort
+	if GuiPort == "" {
+		GuiPortInt, _ := strconv.Atoi(UIPort) 
+		offset, _ := strconv.Atoi(strings.Split(gossipAddr, ":")[1])
+		GuiPortInt += offset
+		GuiPort = strconv.Itoa(GuiPortInt)
+	}
 	// Create gossiper
 	g = &Gossiper{
 		Address : gossipAddr,
 		Conn : conn,
 		Name : name,
 		UIPort : UIPort,
-		GuiPort : GuiPortStr,
+		GuiPort : GuiPort,
 		Peers : &PeersBuffer{
 
 			Peers : peers,
@@ -151,7 +162,7 @@ func InitGossiper(UIPort, gossipAddr, name string, simple bool, peers []string, 
 			Status : make(message.StatusMap),
 		},
 		Ack_chs : &Ack_chs{
-			Chs: make(map[string]chan *message.PeerStatus),
+			Chs: make(map[string]chan *PeerStatusAndSync),
 		},
 		PeerStatuses : &PeerStatuses {
 			Map : make(map[string]map[string]uint32),
@@ -165,16 +176,47 @@ func InitGossiper(UIPort, gossipAddr, name string, simple bool, peers []string, 
 func main() {
 
 	// Get input parameters
-	UIPort, gossipAddr, name, peers, simple, antiEntropy = input()
+	UIPort, GuiPort, gossipAddr, name, peers, simple, antiEntropy = input()
 
 	// Set up gossiper
 	g := InitGossiper(UIPort, gossipAddr, name, simple, peers, antiEntropy)
-	
+
 	// Start gossiper's work
 	g.Start_working()
 
 	// Send sth using network
-	
+	/*
+	if g.Name != "C" {
+		time.Sleep(5 * time.Second)
+	}
+	fmt.Println("Start Sending")
+	msgs := make([]*message.GossipPacket, 0)
+	for i := 1; i < 10; i += 1 {
+		msgs = append(msgs, &message.GossipPacket{
+			Simple : &message.SimpleMessage{
+				OriginalName : g.Name, 
+				RelayPeerAddr : g.Address,
+				Contents : "greeting from " + name + " " + strconv.Itoa(i), 
+			},
+		})
+	}
+	g.RumorBuffer.Rumors[g.Name] = make([]*message.RumorMessage, 0)
+	for i, msg := range msgs {
+		time.Sleep(1 * time.Second)
+		g.StatusBuffer.Mux.Lock()
+		g.StatusBuffer.Status[g.Name] = uint32(i + 2)
+		g.RumorBuffer.Mux.Lock()
+		g.RumorBuffer.Rumors[g.Name] = append(g.RumorBuffer.Rumors[g.Name], msg.Rumor)
+		g.RumorBuffer.Mux.Unlock()
+		g.StatusBuffer.Mux.Unlock()
+		g.Peers.Mux.Lock()
+		for _, peer_addr := range g.Peers.Peers {
+			fmt.Println("Sending " + msg.Simple.Contents + " to peer " + peer_addr)
+			g.N.Send(msg, peer_addr)
+		}
+		g.Peers.Mux.Unlock()
+	}
+	*/
 	// TODO: Set terminating condition
 	for {
 		time.Sleep(10 * time.Second)
@@ -193,8 +235,9 @@ func (gossiper *Gossiper) Start_working() {
 	gossiper.Start_handling()
 
 	// Start antiEntropy sending
-	gossiper.Start_antiEntropy()
-
+	if !gossiper.Simple {
+		gossiper.Start_antiEntropy()
+	}
 	// Start catching timeout rumor
 	// gossiper.HandleRumorMongeringTimeout()
 	gossiper.HandleGUI()
@@ -228,18 +271,11 @@ func (gossiper *Gossiper) Start_handling() {
 
 			case pkt.Packet.Status != nil:
 				// Update peers
+				//fmt.Println("We have a status from ", pkt.Sender)
 				gossiper.UpdatePeers(pkt.Sender)
 
 				// Print peers
-				fmt.Print("PEERS ")
-				for i, s := range gossiper.Peers.Peers {
-
-					fmt.Print(s)
-					if i < len(gossiper.Peers.Peers) - 1 {
-						fmt.Print(",")
-					}
-				}
-				fmt.Println()
+				gossiper.PrintPeers()
 				go gossiper.HandleStatus(pkt)
 			}
 		}
@@ -262,6 +298,11 @@ func (gossiper *Gossiper) Start_antiEntropy() {
 
 			// Conduct antiEntropy job
 			gossiper.Peers.Mux.Lock()
+			// Handle isolated peer
+			if len(gossiper.Peers.Peers) == 0 {
+				gossiper.Peers.Mux.Unlock()
+				continue
+			}
 			rand_peer := gossiper.Peers.Peers[rand.Intn(len(gossiper.Peers.Peers))]
 			gossiper.Peers.Mux.Unlock()
 
@@ -299,13 +340,13 @@ func (g *Gossiper) HandleRumor(wrapped_pkt *message.PacketIncome) {
 	// Decode wrapped pkt
 	sender, rumor := wrapped_pkt.Sender, wrapped_pkt.Packet.Rumor
 
+	// Update status and rumor buffer
+	updated := g.Update(rumor, sender)
+
 	// Defer sending status back
 	defer g.N.Send(&message.GossipPacket{
 			Status : g.StatusBuffer.ToStatusPacket(),
 			}, sender)
-
-	// Update status and rumor buffer
-	updated := g.Update(rumor, sender)
 
 	// Trigger rumor mongering if it is new
 	if updated {
@@ -324,7 +365,6 @@ func (g *Gossiper) Update(rumor *message.RumorMessage, sender string) (updated b
 	// Lock Status
 	g.StatusBuffer.Mux.Lock()
 	defer g.StatusBuffer.Mux.Unlock()
-
 	// Initialize flag showing whether peer is known
 	known_peer := false
 
@@ -401,10 +441,10 @@ func (g *Gossiper) MongerRumor(rumor *message.RumorMessage, target string, exclu
 
 	// Step 2 & 4
 	go func() {
-		
+
 		timeout := time.After(10 * time.Second)
 		// Generate and store ack_ch
-		ack_ch := make(chan *message.PeerStatus)
+		ack_ch := make(chan *PeerStatusAndSync)
 		key := peer_addr + rumor.Origin + strconv.Itoa(int(rumor.ID))
 		g.Ack_chs.Mux.Lock()
 		g.Ack_chs.Chs[key] = ack_ch
@@ -416,18 +456,23 @@ func (g *Gossiper) MongerRumor(rumor *message.RumorMessage, target string, exclu
 
 			select {
 
-			case peerStatus := <-ack_ch:
+			case peerStatusAndSync := <-ack_ch:
 
+				peerStatus, isSync := peerStatusAndSync.PeerStatus, peerStatusAndSync.IsSync
 				g.Ack_chs.Mux.Lock()
 				delete(g.Ack_chs.Chs, key)
 				close(ack_ch)
 				g.Ack_chs.Mux.Unlock()
 
-				if peerStatus.NextID == rumor.ID {
+				if peerStatus.NextID == rumor.ID - 1 && isSync  {
 
 					g.FlipCoinMonger(rumor, []string{peer_addr})
+					return
+				} else if !isSync && peerStatus.NextID > rumor.ID {
+
+					return
 				}
-				return
+
 			case <-timeout:
 				g.Ack_chs.Mux.Lock()
 				delete(g.Ack_chs.Chs, key)
@@ -506,11 +551,12 @@ func (g *Gossiper) HandleStatus(wrapped_pkt *message.PacketIncome) {
 	}
 	fmt.Println()
 	
+
 	// Step 2. Ack all pkts received or not needed by peer
-	go g.Ack(peer_status_map, sender)
+	moreUpdated := g.MoreUpdated(peer_status_map)
+	go g.Ack(peer_status_map, sender, moreUpdated == 0)
 
 	// Step 3. Provide new mongering or Request mongering
-	moreUpdated := g.MoreUpdated(peer_status_map)
 
 	switch moreUpdated {
 
@@ -526,7 +572,7 @@ func (g *Gossiper) HandleStatus(wrapped_pkt *message.PacketIncome) {
 
 
 // Ack rumor mongering
-func (g *Gossiper) Ack(peer_status_map message.StatusMap, sender string) {
+func (g *Gossiper) Ack(peer_status_map message.StatusMap, sender string, isSync bool) {
 
 	// Check all possible pkts being sent to peer
 	// Ack them if necessary
@@ -563,7 +609,10 @@ func (g *Gossiper) Ack(peer_status_map message.StatusMap, sender string) {
 
 			if ack_ch, ok := g.Ack_chs.Chs[sender + origin + strconv.Itoa(int(nextid))]; ok {
 
-				ack_ch<- peerStatus
+				ack_ch<- &PeerStatusAndSync{
+							PeerStatus : peerStatus,
+							IsSync : isSync,
+						}
 			}
 		}
 
@@ -707,7 +756,7 @@ func (g *Gossiper) HandleSimple(wrapped_pkt *message.PacketIncome) {
 			g.Peers.Mux.Lock()
 			for _, peer_addr := range g.Peers.Peers {
 
-				g.N.Send(packet, peer_addr)
+				g.N.Send(packet, peer_addr)	
 			}
 			g.Peers.Mux.Unlock()
 		} else {
@@ -720,10 +769,14 @@ func (g *Gossiper) HandleSimple(wrapped_pkt *message.PacketIncome) {
 			g.PrintPeers()
 			// Broadcast pkt to all peers apart from relayers
 			g.Peers.Mux.Lock()
+			relayPeerAddr := packet.Simple.RelayPeerAddr
 			packet.Simple.RelayPeerAddr = g.Address
+
 			for _, peer_addr := range g.Peers.Peers {
 
-				if peer_addr != packet.Simple.RelayPeerAddr {
+				if peer_addr != relayPeerAddr {
+
+					fmt.Printf("Sending simple message from %s to %s\n", packet.Simple.RelayPeerAddr, peer_addr)
 
 					g.N.Send(packet, peer_addr)
 				}
@@ -778,7 +831,6 @@ func (g *Gossiper) HandleRumorlsMongeringTimeout() {
 
 }
 
-
 // Handle flip coin mongering
 func (g *Gossiper) FlipCoinMonger(rumor *message.RumorMessage, excluded []string) {
 
@@ -804,6 +856,7 @@ func (g *Gossiper) FlipCoinMonger(rumor *message.RumorMessage, excluded []string
 
 func (g *Gossiper) PrintPeers() {
 	fmt.Print("PEERS ")
+
 	for i, s := range g.Peers.Peers {
 
 		fmt.Print(s)
@@ -818,32 +871,34 @@ func (g *Gossiper) PrintPeers() {
 func (g *Gossiper) HandleGUI() {
 
 	// Register router
-	r := mux.NewRouter()
+	go func() {
+		r := mux.NewRouter()
 
-	// Register handlers
-	r.HandleFunc("/message", g.MessageGetHandler).
-		Methods("GET", "OPTIONS")
-	r.HandleFunc("/node",  g.NodeGetHandler).
-		Methods("GET", "OPTIONS")
-	r.HandleFunc("/message", g.MessagePostHandler).
-		Methods("POST", "OPTIONS")
-	r.HandleFunc("/node", g.NodePostHandler).
-		Methods("POST", "OPTIONS")
-	r.HandleFunc("/id", g.IDGetHandler).
-		Methods("GET", "OPTIONS")
+		// Register handlers
+		r.HandleFunc("/message", g.MessageGetHandler).
+			Methods("GET", "OPTIONS")
+		r.HandleFunc("/node",  g.NodeGetHandler).
+			Methods("GET", "OPTIONS")
+		r.HandleFunc("/message", g.MessagePostHandler).
+			Methods("POST", "OPTIONS")
+		r.HandleFunc("/node", g.NodePostHandler).
+			Methods("POST", "OPTIONS")
+		r.HandleFunc("/id", g.IDGetHandler).
+			Methods("GET", "OPTIONS")
 
 
-	fmt.Printf("Starting webapp on address http://127.0.0.1:%s\n", g.GuiPort)
+		fmt.Printf("Starting webapp on address http://127.0.0.1:%s\n", g.GuiPort)
 
-	srv := &http.Server{
+		srv := &http.Server{
 
-		Handler : r,
-		Addr : fmt.Sprintf("127.0.0.1:%s", g.GuiPort),
-		WriteTimeout: 15 * time.Second,
-		ReadTimeout: 15 * time.Second,
-	}
+			Handler : r,
+			Addr : fmt.Sprintf("127.0.0.1:%s", g.GuiPort),
+			WriteTimeout: 15 * time.Second,
+			ReadTimeout: 15 * time.Second,
+		}
 
-	log.Fatal(srv.ListenAndServe())
+		log.Fatal(srv.ListenAndServe())
+	}()
 }
 
 func enableCors(w *http.ResponseWriter) {
@@ -950,6 +1005,7 @@ func (g *Gossiper) AddNewNode(addr string) {
 
 	g.Peers.Mux.Lock()
 	g.Peers.Peers = append(g.Peers.Peers, addr)
+	fmt.Println("After adding new node, our peers are ", g.Peers.Peers)
 	g.Peers.Mux.Unlock()
 }
 
@@ -981,3 +1037,4 @@ func (g *Gossiper) AckPost(success bool, w http.ResponseWriter) {
 	response.Success = success 
 	json.NewEncoder(w).Encode(response)
 }
+
