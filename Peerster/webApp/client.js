@@ -1,6 +1,6 @@
 $(document).ready(function(){
 
-	var guiport = "13081"
+	var guiport = "17345"
 	var url = "http://127.0.0.1:" + guiport + "/"
 	// Get id
 	$.ajax({

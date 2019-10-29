@@ -374,6 +374,7 @@ func (gossiper *Gossiper) Start_antiEntropy() {
 			gossiper.Peers.Mux.Unlock()
 
 			// Send status to selected peer
+			fmt.Printf("Antientropy with %s\n", rand_peer)
 			gossiper.N.Send(&message.GossipPacket{
 				Status : gossiper.StatusBuffer.ToStatusPacket(),
 			}, rand_peer)
@@ -510,6 +511,7 @@ func (g *Gossiper) MongerRumor(rumor *message.RumorMessage, target string, exclu
 	// Step 1
 	var peer_addr string
 
+	// fmt.Println("ID is ", rumor.ID, "Excluded are", excluded)
 	if target == "" {
 		var ok bool
 		peer_addr, ok = g.SelectRandomPeer(excluded)
@@ -540,10 +542,11 @@ func (g *Gossiper) MongerRumor(rumor *message.RumorMessage, target string, exclu
 			select {
 
 			case peerStatusAndSync := <-ack_ch:
+				fmt.Printf("Origin %s Dst %s Rumor id %d rumor content %s \n", rumor.Origin, target, rumor.ID, rumor.Text)
 
 				if peerStatusAndSync == nil {
 					fmt.Println("Peer status and sync nil")
-					fmt.Printf("Origin %s Rumor id %d rumor content %s \n", rumor.Origin, rumor.ID, rumor.Text)
+					fmt.Printf("Origin %s Dst %s Rumor id %d rumor content %s \n", rumor.Origin, target, rumor.ID, rumor.Text)
 				}
 				peerStatus, isSync := peerStatusAndSync.PeerStatus, peerStatusAndSync.IsSync
 				g.Ack_chs.Mux.Lock()
@@ -555,7 +558,7 @@ func (g *Gossiper) MongerRumor(rumor *message.RumorMessage, target string, exclu
 
 					g.FlipCoinMonger(rumor, []string{peer_addr})
 					return
-				} else if !isSync && peerStatus.NextID > rumor.ID {
+				} else if !isSync && peerStatus.NextID > rumor.ID - 1{
 
 					return
 				}
@@ -631,12 +634,12 @@ func (g *Gossiper) HandleStatus(wrapped_pkt *message.PacketIncome) {
 	peer_status_map := peer_status.ToMap()
 
 	// Ouput peer status information
-	fmt.Printf("STATUS from %s ", sender)
+	outputString := fmt.Sprintf("STATUS from %s", sender)
 	for k, v := range peer_status_map {
-
-		fmt.Printf("peer %s nextID %s ", k, strconv.Itoa(int(v)))
+		outputString += fmt.Sprintf("peer %s nextID %s ", k, strconv.Itoa(int(v)))
 	}
-	fmt.Println()
+	outputString += fmt.Sprintf("\n")
+	fmt.Print(outputString)
 	
 
 	// Step 2. Ack all pkts received or not needed by peer
@@ -1066,7 +1069,7 @@ func (g *Gossiper) StartHeartbeat() {
 		/* Need modification if heartbeat start from init */
 		
 		g.StatusBuffer.Mux.Lock()
-		g.StatusBuffer.Status[g.Name] += 2
+		g.StatusBuffer.Status[g.Name] = 2
 		g.StatusBuffer.Mux.Unlock()
 
 
@@ -1104,7 +1107,7 @@ func (g *Gossiper) StartHeartbeat() {
 			g.RumorBuffer.Rumors[g.Name] = append(g.RumorBuffer.Rumors[g.Name], rumor)
 			g.RumorBuffer.Mux.Unlock()
 			g.MongerRumor(rumor, "", nil)
-			fmt.Println("Heartbeating......")
+			fmt.Println("Heartbeating......", id)
 		}
 		
 	}()

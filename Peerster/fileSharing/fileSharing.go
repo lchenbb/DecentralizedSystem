@@ -148,12 +148,11 @@ func (sharer *FileSharer) RequestFile(fileNamePtr *string, metahashPtr *[]byte, 
 		metahash := *metahashPtr
 		dest := *destPtr
 
-		fmt.Printf("DOWNLOADING metafile of %s from %s", fileName, dest)
+		fmt.Printf("DOWNLOADING metafile of %s from %s\n", fileName, dest)
 		chunkHashes := sharer.requestMetaFile(metahash, dest)
 
 		if chunkHashes != nil {
 
-			fmt.Println("Start requesting chunk")
 			// TODO: Modify request chunks to parallel version
 			go func() {
 
@@ -164,12 +163,10 @@ func (sharer *FileSharer) RequestFile(fileNamePtr *string, metahashPtr *[]byte, 
 				for i := 0; i < len(chunkHashes); i += 32 {
 
 					wg.Add(1)
-					fmt.Printf("Requesting %dth chunk", i)
-					fmt.Printf("DOWNLOADING %s chunk %d from %s", fileName, i + 1, dest)
+					fmt.Printf("DOWNLOADING %s chunk %d from %s\n", fileName, i + 1, dest)
 					go sharer.requestChunk(chunkHashes[i : i + 32], dest, contentCh, &wg)
 				}
 
-				fmt.Println("Waiting for wg")
 				wg.Wait()
 
 				// Merge chunks, index them and store the complete obj
@@ -181,7 +178,6 @@ func (sharer *FileSharer) RequestFile(fileNamePtr *string, metahashPtr *[]byte, 
 				}
 				close(contentCh)
 
-				fmt.Println("Creating merged downloads")
 				fmt.Println(content)
 				file, err := os.Create("_Downloads/" + fileName)
 				if err != nil{
@@ -224,7 +220,6 @@ func (sharer *FileSharer) requestChunk(chunkHash []byte, dest string,
 
 		// Push data into channel
 		contentCh<- reply.Data
-		fmt.Println("Returning from requesting chunk")
 		wg.Done()
 		return
 	}
@@ -301,7 +296,7 @@ func (sharer *FileSharer) HandleRequest(wrapped_pkt *message.PacketIncome) {
 				return
 			}
 
-			fmt.Printf("Reading chunk hash %s", string(chunkHash))
+			// fmt.Printf("Reading chunk hash %s", string(chunkHash))
 			metafile = append(metafile, chunkHash...)
 			// TODO: check whether there is need for lock
 			sharer.ChunkHashMap.Mux.Lock()
@@ -309,7 +304,7 @@ func (sharer *FileSharer) HandleRequest(wrapped_pkt *message.PacketIncome) {
 			sharer.ChunkHashMap.Mux.Unlock()
 		}
 
-		fmt.Println("Finished obtaining metafile")
+		// fmt.Println("Finished obtaining metafile")
 		// Send back metaFile
 		sharer.N.Send(&message.GossipPacket{
 
