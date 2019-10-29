@@ -15,6 +15,8 @@ import (
 	"github.com/gorilla/mux"
 	"github.com/LiangweiCHEN/Peerster/network"
 	"github.com/LiangweiCHEN/Peerster/message"
+	"github.com/LiangweiCHEN/Peerster/routing"
+	"github.com/LiangweiCHEN/Peerster/fileSharing"
 )
 
 type Gossiper struct {
@@ -32,6 +34,11 @@ type Gossiper struct {
 	Ack_chs *Ack_chs
 	PeerStatuses *PeerStatuses
 	AntiEntropyPeriod int
+	Dsdv *routing.DSDV
+	RTimer int
+	HopLimit uint32
+	SharedFilePath string
+	FileSharer *fileSharing.FileSharer
 }
 
 type PeerStatus struct {
@@ -58,9 +65,15 @@ type PeersBuffer struct {
 	Mux sync.Mutex
 }
 
+type PeerStatusAndSync struct {
+
+	PeerStatus *message.PeerStatus
+	IsSync bool
+}
+
 type Ack_chs struct {
 
-	Chs map[string]chan *message.PeerStatus
+	Chs map[string]chan *PeerStatusAndSync
 	Mux sync.Mutex
 }
 
@@ -70,12 +83,14 @@ type PeerStatuses struct {
 	Mux sync.Mutex
 }
 /** Global variable **/
-var UIPort, gossipAddr, name string
+var UIPort, GuiPort, gossipAddr, name string
 var peers []string
 var simple bool
 var antiEntropy int
+var rtimer int
+var sharedFilePath string
 
-func input() (UIPort string, gossipAddr string, name string, peers []string, simple bool, antiEntropy int) {
+func input() (UIPort string, GuiPort string, gossipAddr string, name string, peers []string, simple bool, antiEntropy int, rtimer int, sharedFilePath string) {
 
 	// Set flag value containers
 	flag.StringVar(&UIPort, "UIPort", "8080", "UI port num")
@@ -85,23 +100,32 @@ func input() (UIPort string, gossipAddr string, name string, peers []string, sim
 
 	flag.StringVar(&name, "name", "", "name of gossiper")
 
+
+	flag.StringVar(&GuiPort, "GuiPort", "", "GUI port, default to be UIPort + GossipPort")
 	var peers_str string
 
 	flag.StringVar(&peers_str, "peers", "", "list of peers")
 
 	flag.BoolVar(&simple, "simple", false, "Simple broadcast or not")
 
-	flag.IntVar(&antiEntropy, "antiEntropy", 1, "antiEntroypy trigger period")
+	flag.IntVar(&antiEntropy, "antiEntropy", 10, "antiEntroypy trigger period")
+
+	flag.IntVar(&rtimer, "rtimer", 0, "Routing heartbeat period")
+
+	flag.StringVar(&sharedFilePath, "file", "_SharedFiles", "shared file path")
+
 	// Conduct parameter retreival
 	flag.Parse()
 
 	// Convert peers to slice
 	peers = strings.Split(peers_str, ",")
-
+	if peers[0] == "" {
+		peers = peers[1:]
+	}
 	return
 }
 
-func InitGossiper(UIPort, gossipAddr, name string, simple bool, peers []string, antiEntropy int) (g *Gossiper) {
+func InitGossiper(UIPort, gossipAddr, name string, simple bool, peers []string, antiEntropy, rtimer int, sharedFilePath string) (g *Gossiper) {
 
 	// Establish gossiper addr and conn
 	addr, _ := net.ResolveUDPAddr("udp", gossipAddr)
@@ -111,19 +135,20 @@ func InitGossiper(UIPort, gossipAddr, name string, simple bool, peers []string, 
 	client_addr, _ := net.ResolveUDPAddr("udp", ":" + UIPort)
 	client_conn, _ := net.ListenUDP("udp", client_addr)
 
-	// Set up GuiPort
-	GuiPort, _ := strconv.Atoi(UIPort) 
-	offset, _ := strconv.Atoi(strings.Split(gossipAddr, ":")[1])
-	GuiPort += offset
-	GuiPortStr := strconv.Itoa(GuiPort)
-
+	// Check whether need to use default GUIPort
+	if GuiPort == "" {
+		GuiPortInt, _ := strconv.Atoi(UIPort) 
+		offset, _ := strconv.Atoi(strings.Split(gossipAddr, ":")[1])
+		GuiPortInt += offset
+		GuiPort = strconv.Itoa(GuiPortInt)
+	}
 	// Create gossiper
 	g = &Gossiper{
 		Address : gossipAddr,
 		Conn : conn,
 		Name : name,
 		UIPort : UIPort,
-		GuiPort : GuiPortStr,
+		GuiPort : GuiPort,
 		Peers : &PeersBuffer{
 
 			Peers : peers,
@@ -136,6 +161,7 @@ func InitGossiper(UIPort, gossipAddr, name string, simple bool, peers []string, 
 			Client_conn : client_conn,
 			Send_ch : make(chan *message.PacketToSend),
 			Listen_ch : make(chan *message.PacketIncome),
+			Client_listen_ch : make(chan *message.Message),
 			Done_chs : &network.Done_chs{
 
 				Chs : make(map[string]chan struct{}),
@@ -151,30 +177,83 @@ func InitGossiper(UIPort, gossipAddr, name string, simple bool, peers []string, 
 			Status : make(message.StatusMap),
 		},
 		Ack_chs : &Ack_chs{
-			Chs: make(map[string]chan *message.PeerStatus),
+			Chs: make(map[string]chan *PeerStatusAndSync),
 		},
 		PeerStatuses : &PeerStatuses {
 			Map : make(map[string]map[string]uint32),
 		},
 		AntiEntropyPeriod : antiEntropy,
+		Dsdv : &routing.DSDV{
+			Map : make(map[string]string),
+			Ch : make(chan *routing.OriginRelayer),
+		},
+		RTimer : rtimer,
+		HopLimit : uint32(10),
+		SharedFilePath : sharedFilePath,
 	}
 
+	g.FileSharer = &fileSharing.FileSharer{
+
+			N : g.N,
+			Indexer : &fileSharing.FileIndexer{
+				SharedFolder : g.SharedFilePath,
+			},
+			RequestReplyChMap : &fileSharing.RequestReplyChMap{
+				Map : make(map[string]chan *message.DataReply),
+			},
+			HopLimit : g.HopLimit,
+			Origin : g.Name,
+			RequestTimeout : 15,
+			IndexFileMap : make(map[string]*fileSharing.IndexFile),
+			ChunkHashMap : &fileSharing.ChunkHashMap{
+				Map : make(map[string]bool),
+			},
+			Dsdv : g.Dsdv,
+		}
 	return 
 }
 
 func main() {
 
 	// Get input parameters
-	UIPort, gossipAddr, name, peers, simple, antiEntropy = input()
+	UIPort, GuiPort, gossipAddr, name, peers, simple, antiEntropy, rtimer, sharedFilePath = input()
 
 	// Set up gossiper
-	g := InitGossiper(UIPort, gossipAddr, name, simple, peers, antiEntropy)
-	
+	g := InitGossiper(UIPort, gossipAddr, name, simple, peers, antiEntropy, rtimer, sharedFilePath)
+
 	// Start gossiper's work
 	g.Start_working()
 
 	// Send sth using network
-	
+	/*
+	fmt.Println("Start Sending")
+	msgs := make([]*message.GossipPacket, 0)
+	for i := 1; i < 10; i += 1 {
+		msgs = append(msgs, &message.GossipPacket{
+			Rumor : &message.RumorMessage{
+				Origin : g.Name, 
+				ID : uint32(i),
+				Text : "greeting from " + g.Name + " " + strconv.Itoa(i), 
+			},
+		})
+	}
+	g.RumorBuffer.Rumors[g.Name] = make([]*message.RumorMessage, 0)
+	for i, msg := range msgs {
+		time.Sleep(1 * time.Second)
+		g.StatusBuffer.Mux.Lock()
+		g.StatusBuffer.Status[g.Name] = uint32(i + 2)
+		g.RumorBuffer.Mux.Lock()
+		g.RumorBuffer.Rumors[g.Name] = append(g.RumorBuffer.Rumors[g.Name], msg.Rumor)
+		g.RumorBuffer.Mux.Unlock()
+		g.StatusBuffer.Mux.Unlock()
+		g.Peers.Mux.Lock()
+		for _, peer_addr := range g.Peers.Peers {
+			fmt.Println("Sending " + msg.Rumor.Text + " to peer " + peer_addr)
+			g.N.Send(msg, peer_addr)
+		}
+		g.Peers.Mux.Unlock()
+	}
+	*/
 	// TODO: Set terminating condition
 	for {
 		time.Sleep(10 * time.Second)
@@ -193,10 +272,18 @@ func (gossiper *Gossiper) Start_working() {
 	gossiper.Start_handling()
 
 	// Start antiEntropy sending
-	gossiper.Start_antiEntropy()
-
+	if !gossiper.Simple {
+		gossiper.Start_antiEntropy()
+	}
 	// Start catching timeout rumor
 	// gossiper.HandleRumorMongeringTimeout()
+
+	// Start routing
+	gossiper.Dsdv.StartRouting()
+
+	// Start heartbing
+	gossiper.StartHeartbeat()
+
 	gossiper.HandleGUI()
 }
 
@@ -228,20 +315,36 @@ func (gossiper *Gossiper) Start_handling() {
 
 			case pkt.Packet.Status != nil:
 				// Update peers
+				//fmt.Println("We have a status from ", pkt.Sender)
 				gossiper.UpdatePeers(pkt.Sender)
 
 				// Print peers
-				fmt.Print("PEERS ")
-				for i, s := range gossiper.Peers.Peers {
-
-					fmt.Print(s)
-					if i < len(gossiper.Peers.Peers) - 1 {
-						fmt.Print(",")
-					}
-				}
-				fmt.Println()
+				gossiper.PrintPeers()
 				go gossiper.HandleStatus(pkt)
+
+			case pkt.Packet.Private != nil:
+
+				// TODO: Decide whether need to update peers here
+				go gossiper.HandlePrivateMsg(pkt)
+
+			case pkt.Packet.DataRequest != nil:
+
+				fmt.Println("Handling request!!!")
+				go gossiper.FileSharer.HandleRequest(pkt)
+
+			case pkt.Packet.DataReply != nil:
+
+				go gossiper.FileSharer.HandleReply(pkt)
 			}
+		}
+	}()
+
+	go func() {
+
+		for msg := range gossiper.N.Client_listen_ch {
+
+			fmt.Println("Receiving clinet msg")
+			gossiper.HandleClient(msg)
 		}
 	}()
 }
@@ -262,6 +365,11 @@ func (gossiper *Gossiper) Start_antiEntropy() {
 
 			// Conduct antiEntropy job
 			gossiper.Peers.Mux.Lock()
+			// Handle isolated peer
+			if len(gossiper.Peers.Peers) == 0 {
+				gossiper.Peers.Mux.Unlock()
+				continue
+			}
 			rand_peer := gossiper.Peers.Peers[rand.Intn(len(gossiper.Peers.Peers))]
 			gossiper.Peers.Mux.Unlock()
 
@@ -299,19 +407,35 @@ func (g *Gossiper) HandleRumor(wrapped_pkt *message.PacketIncome) {
 	// Decode wrapped pkt
 	sender, rumor := wrapped_pkt.Sender, wrapped_pkt.Packet.Rumor
 
+	// Update status and rumor buffer
+	updated := g.Update(rumor, sender)
+
 	// Defer sending status back
 	defer g.N.Send(&message.GossipPacket{
 			Status : g.StatusBuffer.ToStatusPacket(),
 			}, sender)
 
-	// Update status and rumor buffer
-	updated := g.Update(rumor, sender)
-
-	// Trigger rumor mongering if it is new
+	// Trigger rumor mongering if it is new, 
+	// Trigger update routing table if it is new
 	if updated {
 
-		// Output rumor content
+		// Triger update routing
+		var heartbeat bool
+		if rumor.Text == "" {
+			heartbeat = true
+		} else {
+			heartbeat = false
+		}
+
+		g.Dsdv.Ch<- &routing.OriginRelayer{
+			Origin : rumor.Origin,
+			Relayer : sender,
+			HeartBeat : heartbeat,
+		}
+
+		// Output rumor content only if it is not heartbeat rumor
 		fmt.Printf("RUMOR origin %s from %s ID %s contents %s\n", rumor.Origin, sender, strconv.Itoa(int(rumor.ID)), rumor.Text)
+	
 		g.MongerRumor(rumor, "", []string{sender})
 	}
 
@@ -324,7 +448,6 @@ func (g *Gossiper) Update(rumor *message.RumorMessage, sender string) (updated b
 	// Lock Status
 	g.StatusBuffer.Mux.Lock()
 	defer g.StatusBuffer.Mux.Unlock()
-
 	// Initialize flag showing whether peer is known
 	known_peer := false
 
@@ -401,10 +524,10 @@ func (g *Gossiper) MongerRumor(rumor *message.RumorMessage, target string, exclu
 
 	// Step 2 & 4
 	go func() {
-		
+
 		timeout := time.After(10 * time.Second)
 		// Generate and store ack_ch
-		ack_ch := make(chan *message.PeerStatus)
+		ack_ch := make(chan *PeerStatusAndSync)
 		key := peer_addr + rumor.Origin + strconv.Itoa(int(rumor.ID))
 		g.Ack_chs.Mux.Lock()
 		g.Ack_chs.Chs[key] = ack_ch
@@ -416,18 +539,27 @@ func (g *Gossiper) MongerRumor(rumor *message.RumorMessage, target string, exclu
 
 			select {
 
-			case peerStatus := <-ack_ch:
+			case peerStatusAndSync := <-ack_ch:
 
+				if peerStatusAndSync == nil {
+					fmt.Println("Peer status and sync nil")
+					fmt.Printf("Origin %s Rumor id %d rumor content %s \n", rumor.Origin, rumor.ID, rumor.Text)
+				}
+				peerStatus, isSync := peerStatusAndSync.PeerStatus, peerStatusAndSync.IsSync
 				g.Ack_chs.Mux.Lock()
 				delete(g.Ack_chs.Chs, key)
 				close(ack_ch)
 				g.Ack_chs.Mux.Unlock()
 
-				if peerStatus.NextID == rumor.ID {
+				if peerStatus.NextID == rumor.ID - 1 && isSync  {
 
 					g.FlipCoinMonger(rumor, []string{peer_addr})
+					return
+				} else if !isSync && peerStatus.NextID > rumor.ID {
+
+					return
 				}
-				return
+
 			case <-timeout:
 				g.Ack_chs.Mux.Lock()
 				delete(g.Ack_chs.Chs, key)
@@ -506,11 +638,12 @@ func (g *Gossiper) HandleStatus(wrapped_pkt *message.PacketIncome) {
 	}
 	fmt.Println()
 	
+
 	// Step 2. Ack all pkts received or not needed by peer
-	go g.Ack(peer_status_map, sender)
+	moreUpdated := g.MoreUpdated(peer_status_map)
+	go g.Ack(peer_status_map, sender, moreUpdated == 0)
 
 	// Step 3. Provide new mongering or Request mongering
-	moreUpdated := g.MoreUpdated(peer_status_map)
 
 	switch moreUpdated {
 
@@ -526,7 +659,7 @@ func (g *Gossiper) HandleStatus(wrapped_pkt *message.PacketIncome) {
 
 
 // Ack rumor mongering
-func (g *Gossiper) Ack(peer_status_map message.StatusMap, sender string) {
+func (g *Gossiper) Ack(peer_status_map message.StatusMap, sender string, isSync bool) {
 
 	// Check all possible pkts being sent to peer
 	// Ack them if necessary
@@ -563,7 +696,10 @@ func (g *Gossiper) Ack(peer_status_map message.StatusMap, sender string) {
 
 			if ack_ch, ok := g.Ack_chs.Chs[sender + origin + strconv.Itoa(int(nextid))]; ok {
 
-				ack_ch<- peerStatus
+				ack_ch<- &PeerStatusAndSync{
+							PeerStatus : peerStatus,
+							IsSync : isSync,
+						}
 			}
 		}
 
@@ -682,6 +818,106 @@ func (g *Gossiper) RequestMongering(peer_status message.StatusMap, sender string
 }
 
 
+func (g *Gossiper) HandleClient(msg *message.Message) {
+
+	switch {
+	// Handle simple flag case
+	case g.Simple:
+
+		// Output msg content
+		fmt.Printf("CLIENT MESSAGE %s\n", msg.Text)
+		g.PrintPeers()
+
+		// Broadcast
+		pkt := &message.GossipPacket{
+			Simple : &message.SimpleMessage{
+				OriginalName : g.Name,
+				RelayPeerAddr : g.Address,
+				Contents : msg.Text,
+			},
+		}
+
+		g.Peers.Mux.Lock()
+		for _, peer_addr := range g.Peers.Peers {
+
+			g.N.Send(pkt, peer_addr)	
+		}
+		g.Peers.Mux.Unlock()
+	case msg.Destination == nil && msg.File == nil:
+		// Handle mongering rumor case
+
+		// Step 1. Construct rumor message
+		// Output msg content
+		fmt.Printf("CLIENT MESSAGE %s\n", msg.Text)
+
+		g.RumorBuffer.Mux.Lock()
+		defer g.RumorBuffer.Mux.Unlock()
+
+		rumor := &message.RumorMessage{
+					Origin : g.Name,
+					ID : uint32(len(g.RumorBuffer.Rumors[g.Name]) + 1),
+					Text : msg.Text,
+				}
+
+		// Store rumor
+		g.RumorBuffer.Rumors[g.Name] = append(g.RumorBuffer.Rumors[g.Name], rumor)
+
+		// Step 2. Update status
+		g.StatusBuffer.Mux.Lock()
+		defer g.StatusBuffer.Mux.Unlock()
+
+		if _, ok := g.StatusBuffer.Status[g.Name]; !ok {
+
+			g.StatusBuffer.Status[g.Name] = 2
+		} else {
+
+			g.StatusBuffer.Status[g.Name] += 1
+		}
+
+		// Step 3. Trigger rumor mongering
+		g.MongerRumor(rumor, "", []string{})
+	case msg.File == nil:
+		// Handle private message sending
+		// 1. Find next hop router
+		// 2. Create private message with init hop limit and zero id
+		// 3. Directly send private msg to next hop
+		// TODO: Solve pkt lost problem
+
+		// Print dsdv
+		// Step 1
+		nextHop := g.Dsdv.Map[*msg.Destination]
+
+		// Step 2
+		privatePkt := &message.GossipPacket{
+			Private : &message.PrivateMessage{
+						Origin : g.Name,
+						ID : 0,
+						Destination : *msg.Destination,
+						Text : msg.Text,
+						HopLimit : g.HopLimit,
+					},
+		}
+
+		// Step 3
+
+		g.N.Send(privatePkt, nextHop)
+	case msg.File != nil && msg.Request == nil:
+		// Handle File indexing
+		// 1. Trigger fileSharing obj indexing
+
+		g.FileSharer.CreateIndexFile(msg.File)
+		fmt.Printf("Indexing %s", *msg.File)
+
+	case msg.File != nil && msg.Request != nil:
+		// Handle file request
+		// 1. Trigger fileSharing obj requesting
+
+		g.FileSharer.RequestFile(msg.File, msg.Request, msg.Destination)
+		fmt.Printf("Requesting %s from %s with hash %v\n", *msg.File, *msg.Destination, *msg.Request)
+
+	}
+}
+
 // Handle Simple Message
 func (g *Gossiper) HandleSimple(wrapped_pkt *message.PacketIncome) {
 	// 0. Handle simple flag case
@@ -707,7 +943,7 @@ func (g *Gossiper) HandleSimple(wrapped_pkt *message.PacketIncome) {
 			g.Peers.Mux.Lock()
 			for _, peer_addr := range g.Peers.Peers {
 
-				g.N.Send(packet, peer_addr)
+				g.N.Send(packet, peer_addr)	
 			}
 			g.Peers.Mux.Unlock()
 		} else {
@@ -720,10 +956,14 @@ func (g *Gossiper) HandleSimple(wrapped_pkt *message.PacketIncome) {
 			g.PrintPeers()
 			// Broadcast pkt to all peers apart from relayers
 			g.Peers.Mux.Lock()
+			relayPeerAddr := packet.Simple.RelayPeerAddr
 			packet.Simple.RelayPeerAddr = g.Address
+
 			for _, peer_addr := range g.Peers.Peers {
 
-				if peer_addr != packet.Simple.RelayPeerAddr {
+				if peer_addr != relayPeerAddr {
+
+					fmt.Printf("Sending simple message from %s to %s\n", packet.Simple.RelayPeerAddr, peer_addr)
 
 					g.N.Send(packet, peer_addr)
 				}
@@ -732,40 +972,37 @@ func (g *Gossiper) HandleSimple(wrapped_pkt *message.PacketIncome) {
 		}
 		return
 	}
-
-	// Step 1. Construct rumor message
-	// Output msg content
-	fmt.Printf("CLIENT MESSAGE %s\n", packet.Simple.Contents)
-
-	g.RumorBuffer.Mux.Lock()
-	defer g.RumorBuffer.Mux.Unlock()
-
-	rumor := &message.RumorMessage{
-				Origin : g.Name,
-				ID : uint32(len(g.RumorBuffer.Rumors[g.Name]) + 1),
-				Text : packet.Simple.Contents,
-			}
-
-	// Store rumor
-	g.RumorBuffer.Rumors[g.Name] = append(g.RumorBuffer.Rumors[g.Name], rumor)
-
-	// Step 2. Update status
-	g.StatusBuffer.Mux.Lock()
-	defer g.StatusBuffer.Mux.Unlock()
-
-	if _, ok := g.StatusBuffer.Status[g.Name]; !ok {
-
-		g.StatusBuffer.Status[g.Name] = 2
-	} else {
-
-		g.StatusBuffer.Status[g.Name] += 1
-	}
-
-	// Step 3. Trigger rumor mongering
-	g.MongerRumor(rumor, "", []string{})
 }
 
 
+func (g *Gossiper) HandlePrivateMsg(wrapped_pkt *message.PacketIncome) {
+	// 1. Accept the msg if self is dest
+	// 2. Decrement and check for timeout, stop forwarding if timeout
+	// 3. Send to next hop router with decremented HopLimit
+
+	// Step 1
+	pkt := wrapped_pkt.Packet
+	fmt.Println("Handling PRIVATE")
+	if pkt.Private.Destination == g.Name {
+
+		fmt.Printf("PRIVATE origin %s hop-limit %d contents %s\n",
+					pkt.Private.Origin,
+					int(pkt.Private.HopLimit),
+					pkt.Private.Text)
+
+		return
+	}
+
+	// Step 2
+	pkt.Private.HopLimit -= 1
+	if pkt.Private.HopLimit == 0 {
+		return
+	}
+
+	// Step 3
+	nextHop := g.Dsdv.Map[pkt.Private.Destination]
+	g.N.Send(pkt, nextHop)
+}
 // Handle timeout resend
 func (g *Gossiper) HandleRumorlsMongeringTimeout() {
 
@@ -777,7 +1014,6 @@ func (g *Gossiper) HandleRumorlsMongeringTimeout() {
 	} ()
 
 }
-
 
 // Handle flip coin mongering
 func (g *Gossiper) FlipCoinMonger(rumor *message.RumorMessage, excluded []string) {
@@ -804,6 +1040,7 @@ func (g *Gossiper) FlipCoinMonger(rumor *message.RumorMessage, excluded []string
 
 func (g *Gossiper) PrintPeers() {
 	fmt.Print("PEERS ")
+
 	for i, s := range g.Peers.Peers {
 
 		fmt.Print(s)
@@ -815,35 +1052,96 @@ func (g *Gossiper) PrintPeers() {
 }
 
 
+func (g *Gossiper) StartHeartbeat() {
+
+	go func() {
+
+		// Stop heartbeat if RTime is zero
+		if g.RTimer == 0 {
+
+			return
+		}
+
+		// Start initial heart beat
+		/* Need modification if heartbeat start from init */
+		
+		g.StatusBuffer.Mux.Lock()
+		g.StatusBuffer.Status[g.Name] += 2
+		g.StatusBuffer.Mux.Unlock()
+
+
+		rumor := &message.RumorMessage{
+			Origin : g.Name,
+			ID : uint32(1),
+			Text : "",
+		}
+		fmt.Printf("Initial rumor is %d", 1)
+		
+		g.RumorBuffer.Mux.Lock()
+		g.RumorBuffer.Rumors[g.Name] = append(g.RumorBuffer.Rumors[g.Name], rumor)
+		g.RumorBuffer.Mux.Unlock()
+
+		g.MongerRumor(rumor, "", nil)
+
+		// Periodically heartbeat
+		
+		ticker := time.NewTicker(time.Duration(g.RTimer) * time.Second)
+
+		for _ = range ticker.C {
+
+			// Periodically heartbeat
+			g.StatusBuffer.Mux.Lock()
+			id := g.StatusBuffer.Status[g.Name]
+			g.StatusBuffer.Status[g.Name] += 1
+			g.StatusBuffer.Mux.Unlock()
+
+			rumor := &message.RumorMessage{
+				Origin : g.Name,
+				ID : uint32(id),
+				Text : "",
+			}
+			g.RumorBuffer.Mux.Lock()
+			g.RumorBuffer.Rumors[g.Name] = append(g.RumorBuffer.Rumors[g.Name], rumor)
+			g.RumorBuffer.Mux.Unlock()
+			g.MongerRumor(rumor, "", nil)
+			fmt.Println("Heartbeating......")
+		}
+		
+	}()
+}
+/*****************************************************/
+// GUI Handling
 func (g *Gossiper) HandleGUI() {
 
 	// Register router
-	r := mux.NewRouter()
+	go func() {
+		r := mux.NewRouter()
 
-	// Register handlers
-	r.HandleFunc("/message", g.MessageGetHandler).
-		Methods("GET", "OPTIONS")
-	r.HandleFunc("/node",  g.NodeGetHandler).
-		Methods("GET", "OPTIONS")
-	r.HandleFunc("/message", g.MessagePostHandler).
-		Methods("POST", "OPTIONS")
-	r.HandleFunc("/node", g.NodePostHandler).
-		Methods("POST", "OPTIONS")
-	r.HandleFunc("/id", g.IDGetHandler).
-		Methods("GET", "OPTIONS")
+		// Register handlers
+		r.HandleFunc("/message", g.MessageGetHandler).
+			Methods("GET", "OPTIONS")
+		r.HandleFunc("/node",  g.NodeGetHandler).
+			Methods("GET", "OPTIONS")
+		r.HandleFunc("/message", g.MessagePostHandler).
+			Methods("POST", "OPTIONS")
+		r.HandleFunc("/node", g.NodePostHandler).
+			Methods("POST", "OPTIONS")
+		r.HandleFunc("/id", g.IDGetHandler).
+			Methods("GET", "OPTIONS")
 
 
-	fmt.Printf("Starting webapp on address http://127.0.0.1:%s\n", g.GuiPort)
+		fmt.Printf("Starting webapp on address http://127.0.0.1:%s\n", g.GuiPort)
 
-	srv := &http.Server{
+		srv := &http.Server{
 
-		Handler : r,
-		Addr : fmt.Sprintf("127.0.0.1:%s", g.GuiPort),
-		WriteTimeout: 15 * time.Second,
-		ReadTimeout: 15 * time.Second,
-	}
+			Handler : r,
+			Addr : fmt.Sprintf("127.0.0.1:%s", g.GuiPort),
+			WriteTimeout: 15 * time.Second,
+			ReadTimeout: 15 * time.Second,
+		}
 
-	log.Fatal(srv.ListenAndServe())
+		log.Fatal(srv.ListenAndServe())
+	}()
 }
 
 func enableCors(w *http.ResponseWriter) {
@@ -950,6 +1248,7 @@ func (g *Gossiper) AddNewNode(addr string) {
 
 	g.Peers.Mux.Lock()
 	g.Peers.Peers = append(g.Peers.Peers, addr)
+	fmt.Println("After adding new node, our peers are ", g.Peers.Peers)
 	g.Peers.Mux.Unlock()
 }
 
@@ -981,3 +1280,4 @@ func (g *Gossiper) AckPost(success bool, w http.ResponseWriter) {
 	response.Success = success 
 	json.NewEncoder(w).Encode(response)
 }
+

@@ -7,7 +7,11 @@ import (
 /* Struct definition */
 type Message struct {
 
+	// TODO: Figure out why need ptr here
 	Text string
+	Destination *string
+	File *string
+	Request *[]byte
 }
 
 type SimpleMessage struct {
@@ -35,11 +39,40 @@ type StatusPacket struct {
 	Want []PeerStatus
 }
 
+type  PrivateMessage struct {
+
+	Origin string
+	ID uint32
+	Text string
+	Destination string
+	HopLimit uint32
+}
+
+type DataRequest struct {
+
+	Origin string
+	Destination string
+	HopLimit uint32
+	HashValue []byte
+}
+
+type DataReply struct {
+
+	Origin string
+	Destination string
+	HopLimit uint32
+	HashValue []byte
+	Data []byte
+}
+
 type GossipPacket struct {
 
 	Simple *SimpleMessage
 	Rumor *RumorMessage
 	Status *StatusPacket
+	Private *PrivateMessage
+	DataRequest *DataRequest
+	DataReply *DataReply
 }
 
 type Gossiper struct {
@@ -59,6 +92,12 @@ type PacketToSend struct {
 type PacketIncome struct {
 
 	Packet *GossipPacket
+	Sender string
+}
+
+type ClientMsgIncome struct {
+
+	Msg *Message
 	Sender string
 }
 

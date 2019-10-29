@@ -18,6 +18,7 @@ type NetworkHandler struct {
 	Addr *net.UDPAddr
 	Send_ch chan *message.PacketToSend
 	Listen_ch chan *message.PacketIncome
+	Client_listen_ch chan *message.Message
 	Done_chs *Done_chs
 	RumorTimeoutCh chan *message.PacketToSend
 }
@@ -125,7 +126,7 @@ func (n *NetworkHandler) Start_listening_client() {
 		packet := new(message.Message)
 		// fmt.Println("Listening")
 		// Try to collect encoded pkt
-		size, addr, err := n.Client_conn.ReadFromUDP(buffer)
+		size, _, err := n.Client_conn.ReadFromUDP(buffer)
 
 		// fmt.Println("Receiving " + strconv.Itoa(size))
 		if err != nil {
@@ -141,17 +142,7 @@ func (n *NetworkHandler) Start_listening_client() {
 		// fmt.Printf("CLIENT MESSAGE %s\n", packet.Simple.Contents)
 
 		// Put pkt into listen channel
-		n.Listen_ch <- &message.PacketIncome{
-			Packet : &message.GossipPacket{
-				Simple : &message.SimpleMessage{
-
-					OriginalName : "client",
-					RelayPeerAddr : "",
-					Contents : packet.Text,
-				},
-			},
-			Sender : addr.String(),
-		}
+		n.Client_listen_ch <- packet
 		fmt.Println("Successfully put client msg into channel")
 	}
 
