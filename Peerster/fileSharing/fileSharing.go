@@ -61,15 +61,16 @@ type FileSharer struct {
 	Dsdv *routing.DSDV
 }
 
-func (sharer *FileSharer) Request(hash []byte, dest string, ch chan *message.DataReply) {
+func (sharer *FileSharer) Request(hashPtr *[]byte, dest string, ch chan *message.DataReply) {
 	// 1. Register requestReplyChannel and ticker
 	// 2. Send request to dest
 	// 3. If timeout: Resend
 	// 4. If receive reply from requestReplyChannel and not empty: trigger requestChunk
 	// 5. Return failure in request
 
+	
 	go func() {
-
+		hash := *hashPtr
 		// Step 1
 		request := &message.DataRequest{
 
@@ -82,6 +83,7 @@ func (sharer *FileSharer) Request(hash []byte, dest string, ch chan *message.Dat
 
 			DataRequest : request,
 		}
+		fmt.Printf("The hash being sent in REQUEST is %s\n", base64.URLEncoding.EncodeToString(hash))
 		replyCh := make(chan *message.DataReply)
 		sharer.RequestReplyChMap.Mux.Lock()
 		sharer.RequestReplyChMap.Map[dest + string(hash)] = replyCh
@@ -93,7 +95,7 @@ func (sharer *FileSharer) Request(hash []byte, dest string, ch chan *message.Dat
 
 		sharer.N.Send(gossipPacket, sharer.Dsdv.Map[dest])
 
-		fmt.Printf("Sending file request to %s", sharer.Dsdv.Map[dest])
+		fmt.Printf("Sending file request to %s\n", sharer.Dsdv.Map[dest])
 		for {
 
 			select {
@@ -108,7 +110,7 @@ func (sharer *FileSharer) Request(hash []byte, dest string, ch chan *message.Dat
 				if len(reply.Data) == 0 {
 
 					fmt.Println(request.HashValue)
-					fmt.Printf("Peer %s does not contain value for hash %s\n", request.Origin, request.HashValue)
+					fmt.Printf("Peer %s does not contain value for hash %s\n", request.Origin, base64.URLEncoding.EncodeToString(request.HashValue))
 					ch<- nil
 					return
 				}
@@ -130,7 +132,7 @@ func (sharer *FileSharer) requestMetaFile(metahash []byte, dest string) ([]byte)
 
 	ch := make(chan *message.DataReply)
 	defer close(ch)
-	sharer.Request(metahash, dest, ch)
+	sharer.Request(&metahash, dest, ch)
 	reply := <-ch
 
 	if reply == nil {
@@ -163,8 +165,11 @@ func (sharer *FileSharer) RequestFile(fileNamePtr *string, metahashPtr *[]byte, 
 				for i := 0; i < len(chunkHashes); i += 32 {
 
 					wg.Add(1)
-					fmt.Printf("DOWNLOADING %s chunk %d from %s\n", fileName, i + 1, dest)
-					go sharer.requestChunk(chunkHashes[i : i + 32], dest, contentCh, &wg)
+					// Localize chunkhash
+					i := i
+					chunkHash := chunkHashes[i : i + 32]
+					fmt.Printf("DOWNLOADING %s chunk %d from %s with hash %s\n", fileName, i + 1, dest, base64.URLEncoding.EncodeToString(chunkHashes[i : i + 32]))
+					sharer.requestChunk(&chunkHash, dest, contentCh, &wg)
 				}
 
 				wg.Wait()
@@ -199,13 +204,14 @@ func (sharer *FileSharer) RequestFile(fileNamePtr *string, metahashPtr *[]byte, 
 	}()
 }
 
-func (sharer *FileSharer) requestChunk(chunkHash []byte, dest string,
+func (sharer *FileSharer) requestChunk(chunkHashPtr *[]byte, dest string,
 										 contentCh chan []byte,
 										wg *sync.WaitGroup) {
-	
+
+	chunkHash := *chunkHashPtr
 	ch := make(chan *message.DataReply)
 	defer close(ch)
-	sharer.Request(chunkHash, dest, ch)
+	sharer.Request(chunkHashPtr, dest, ch)
 	reply := <-ch
 
 	if reply == nil {
@@ -244,7 +250,7 @@ func (sharer *FileSharer) HandleReply(wrapped_pkt *message.PacketIncome) {
 	}
 	sharer.RequestReplyChMap.Mux.Unlock()
 
-	fmt.Printf("Receive %v from server", dataReply.Data)
+	fmt.Printf("Receive %v from server\n", dataReply.Data)
 	return
 }
 
@@ -255,6 +261,7 @@ func (sharer *FileSharer) HandleRequest(wrapped_pkt *message.PacketIncome) {
 	// 2. If find chunks in chunkHashList, return chunk
 
 	// Step 1
+	fmt.Printf("REQUEST HASH IS %s\n", base64.URLEncoding.EncodeToString(wrapped_pkt.Packet.DataRequest.HashValue))
 	dataRequest := wrapped_pkt.Packet.DataRequest
 	hash := dataRequest.HashValue
 	key := string(hash)
@@ -369,16 +376,17 @@ func (sharer *FileSharer) HandleRequest(wrapped_pkt *message.PacketIncome) {
 	}
 }
 
-func (sharer *FileSharer) CreateIndexFile(fileNamePtr *string) {
+func (sharer *FileSharer) CreateIndexFile(fileNamePtr *string) (err error) {
 
-	indexFile := sharer.Indexer.CreateIndexFile(fileNamePtr)
+	indexFile, err := sharer.Indexer.CreateIndexFile(fileNamePtr)
 	sharer.IndexFileMap[string(indexFile.MetaFileHash) + "_meta"] = indexFile
 	fmt.Printf("Create index file for %s with value %v named %s\n", indexFile.FileName,
 																 indexFile.MetaFileHash,
 																  string(indexFile.MetaFileHash))
+	return															  
 }
 
-func (indexer *FileIndexer) CreateIndexFile(fileNamePtr *string) (indexFile *IndexFile) {
+func (indexer *FileIndexer) CreateIndexFile(fileNamePtr *string) (indexFile *IndexFile, err error) {
 	// 1. Read chunks and compute hashes
 	// 2. Compute metahash
 
@@ -407,7 +415,7 @@ func (indexer *FileIndexer) CreateIndexFile(fileNamePtr *string) (indexFile *Ind
 		if err != nil {
 			if err != io.EOF {
 				fmt.Println(err)
-				return
+				return nil, err
 			}
 			break
 		}
@@ -423,12 +431,12 @@ func (indexer *FileIndexer) CreateIndexFile(fileNamePtr *string) (indexFile *Ind
 		chunkObj, err := os.Create(indexer.SharedFolder + "/" + hashName)
 		if err != nil {
 			fmt.Println(err)
-			return
+			return nil, err
 		}
 		_, err = chunkObj.Write(buffer[: bytesread])
 		if err != nil {
 			fmt.Println(err)
-			return
+			return nil, err
 		}
 		chunkObj.Close()
 
@@ -479,7 +487,7 @@ func main() {
 	}
 
 	tmp := "trivial"
-	indexFile := indexer.CreateIndexFile(&tmp)
+	indexFile, err := indexer.CreateIndexFile(&tmp)
 
 	f, err := os.Create(indexer.SharedFolder + "/trivial_meta")
 	if err != nil {
