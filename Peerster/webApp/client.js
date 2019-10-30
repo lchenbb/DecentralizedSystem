@@ -1,6 +1,6 @@
 $(document).ready(function(){
 
-	var guiport = "17345"
+	var guiport = "13081"
 	var url = "http://127.0.0.1:" + guiport + "/"
 	// Get id
 	$.ajax({
@@ -19,6 +19,7 @@ $(document).ready(function(){
 	// Initialize buffer for msg and peernodes
 	var peer_addrs = new Array();
 	var rumors = new Array();
+	var routable = new Array();
 
 	// Define update peer_addrs and rumors func
 	function updatePeers() {
@@ -51,6 +52,35 @@ $(document).ready(function(){
  		});
 	};
 
+	function updateRoutable() {
+
+		$.ajax({
+			url: url + "routing",
+			type: "GET",
+			dataType: "json",
+			success: function(json){
+
+				console.log(json);
+				var new_routable_peers = Array.from(json.nodes, x => x);
+
+				if (new_routable_peers.length > routable.length) {
+
+					routable = new_routable_peers;
+
+					$("#RoutableBox").empty();
+
+					routable.forEach((v, i) => {
+
+						console.log("Adding routable")
+						$("#RoutableBox").append($("<option/>", {
+							value : v,
+							text : v
+						}));
+					})
+				}
+			} 
+		})
+	}
 	function updateMsg() {
 
 		$.ajax({
@@ -80,6 +110,7 @@ $(document).ready(function(){
 	// Run update periodically
 	setInterval(updatePeers, 1000);
 	setInterval(updateMsg, 1000);
+	setInterval(updateRoutable, 1000);
 
 	// Define handler for add msg
 	$("#InputBtn").click(function(){
@@ -105,6 +136,63 @@ $(document).ready(function(){
 		});
 	});
 
+	// Define handler for add private msg
+	$("#PrivateBtn").click(function(){
+
+		// Get destination and text
+		var dest = $("#RoutableBox").children("option:selected").val();
+		var text = $("#PrivateInput").val();
+
+		// Refresh text area
+		$("#PrivateInput").val("");
+
+		// Send msg to server
+		var data = {Text : text,
+					Dest : dest};
+
+		$.ajax({
+
+			url: url + "routing",
+			type: "POST",
+			data: JSON.stringify(data),
+			dataType: "json",
+			success: function(msg) {
+
+				alert("Sucessfully send private msg");
+			}
+		});
+	})
+
+	// Define handler for file sharing
+	$("#ShareBtn").click(function(){
+
+		// Get destination of file
+		var dest = $("#ToShareFile").val();
+
+		// Refresh to share file
+		$("#ToShareFile").val("");
+
+		// Send fileName to fileSharer
+		var data = {
+			Name : dest
+		};
+
+		$.ajax({
+
+			url: url + "sharing",
+			type: "POST",
+			data: JSON.stringify(data),
+			dataType: "json",
+			success: function(msg) {
+
+				alert("Sucessfully share file")
+			},
+			error: function(xhr, status) {
+
+				alert("Input fileName not valid!!!")
+			}
+		})
+	})
 	// Define handler for add pere
 	$("#PeerAddBtn").click(function(){
 
@@ -136,5 +224,39 @@ $(document).ready(function(){
 			}
 		});
 	});
+
+	// Define handler for file request
+	$("#RequestBtn").click(function(){
+
+		// Get target peer name, local file name and metahash
+		var target = $("#RequestPeer").val();
+		var localFileName = $("#FileNameToStore").val();
+		var metaHash = $("#MetaHash").val();
+
+		// Fresh the input
+		$("#RequestPeer").val("")
+		$("#FileNameToStore").val("")
+		$("#MetaHash").val("")
+
+		// Send request to peer
+		var data = {
+
+			Dest : target,
+			FileName : localFileName,
+			MetaHash : metaHash
+		};
+
+		$.ajax({
+
+			url: url + "request",
+			type: "POST",
+			data: JSON.stringify(data),	
+			dataType: "json",
+			success: function(msg) {
+
+				alert("Successfully request a file");
+			}
+		});
+	})
 })
 

@@ -22,13 +22,21 @@ div.leftThing {
   width: 25%;
   background-color: blue;
 }
-div.content {
-  width: 50%;
+div.contentLeft {
+  width: 25%;
   background-color: green;
+}
+div.contentRight{
+	width : 25%;
+	background-color: white;
 }
 div.rightThing {
   width: 25%;
   background-color: yellow;
+}
+div.wideThing {
+	width: 50%;
+	background-color: blue;
 }
 </style>
 </head>
@@ -40,13 +48,17 @@ div.rightThing {
 		<div id="NodeID"></div>	
 		</div>
 
-		<div class="content">
+		<div class="contentLeft">
 			<h2>Node Box</h2>
 			<div class="NodeBox" id="PeerBox">
-			Lorem ipsum dolor sit amet, consectetuer adipiscing elit, sed diam nonummy nibh euismod tincidunt ut laoreet dolore magna aliquam erat volutpat. Ut wisi enim ad minim veniam, quis nostrud exerci tation ullamcorper suscipit lobortis nisl ut aliquip ex ea commodo consequat. Duis autem vel eum iriure dolor in hendrerit in vulputate velit esse molestie consequat, vel illum dolore eu feugiat nulla facilisis at vero eros et accumsan et iusto odio dignissim qui blandit praesent luptatum zzril delenit augue duis dolore te feugait nulla facilisi. Nam liber tempor cum soluta nobis eleifend option congue nihil imperdiet doming id quod mazim placerat facer possim assum. Typi non habent claritatem insitam; est usus legentis in iis qui facit eorum claritatem. Investigationes demonstraverunt lectores legere me lius quod ii legunt saepius.
 			</div>
 		</div>
 
+		<div class="contentRight">
+			<h2>Routable Node</h2>
+			<select class="Routable" id="RoutableBox" multiple>
+			</select>
+		</div>
 		<div class="rightThing">
 			<h2>Msg list</h2>
 			<div id="MsgBox">
@@ -60,12 +72,30 @@ div.rightThing {
 		<textarea id="InputMsg"></textarea>
 		<button id="InputBtn">Send</button>
 	</div>
-	<div class="rightThing">
+	<div class="contentLeft">
 		<h2>Add peer</h2>
 		<textarea id="PeerAddr"></textarea>
 		<button id="PeerAddBtn">Add</button>
 	</div>
+	<div class="contentRight" id="PrivateInputBox">
+		<h2>Private Msg</h2>
+		<textarea id="PrivateInput"></textarea>
+		<button id="PrivateBtn">Submit</button>	
 	</div>
-
+	<div class="rightThing" id="ShareFileBox">
+		<h2>Share File</h2>
+		<textarea id="ToShareFile"></textarea>
+		<button id="ShareBtn">Share</button>
+	</div>
+</div>
+<div class="container">
+	<div class="wideThing" id="RequestFile">
+		<h2> Requst File</h2>
+		<textarea id="RequestPeer" placeholder="RequestPeerName"></textarea>
+		<textarea id="FileNameToStore" placeholder="FileNameToStore"></textarea>
+		<textarea id="MetaHash" placeholder="MetaHash"></textarea>
+		<button id="RequestBtn">Request</button>
+	</div>
+</div>
 
 </body>

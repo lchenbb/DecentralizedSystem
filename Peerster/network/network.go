@@ -8,6 +8,7 @@ import (
 	//"strconv"
 	//"time"
 	"github.com/dedis/protobuf"
+	"encoding/base64"
 	"github.com/LiangweiCHEN/Peerster/message"
 )
 
@@ -55,6 +56,11 @@ func (n *NetworkHandler) Start_sending() {
 
 		pkt_to_send := pkt_to_send
 
+		// Check validity for file sharing
+		if pkt_to_send.Packet.DataRequest != nil {
+
+			fmt.Printf("%s\n", base64.URLEncoding.EncodeToString(pkt_to_send.Packet.DataRequest.HashValue))
+		}
 		// Localize pkt and addr
 		pkt, err := protobuf.Encode(pkt_to_send.Packet)
 
@@ -82,7 +88,7 @@ func (n *NetworkHandler) Start_sending() {
 func (n *NetworkHandler) Start_listening() {
 
 	// Create buffer and pkt container
-	buffer := make([]byte, 1024)
+	buffer := make([]byte, 9 * 1024)
 
 	// Listen
 	for {
@@ -105,6 +111,10 @@ func (n *NetworkHandler) Start_listening() {
 		// Output packet for testing
 		//fmt.Printf("CLIENT MESSAGE %s\n", packet.Rumor.Text)
 
+		if packet.DataRequest != nil {
+
+			fmt.Printf("RECEIVE REQUEST %s", base64.URLEncoding.EncodeToString(packet.DataRequest.HashValue))
+		}
 		// Put pkt into listen channel
 		n.Listen_ch <- &message.PacketIncome{
 			Packet : packet,
@@ -118,7 +128,7 @@ func (n *NetworkHandler) Start_listening() {
 
 func (n *NetworkHandler) Start_listening_client() {
 	// Create buffer and pkt container
-	buffer := make([]byte, 1024)
+	buffer := make([]byte, 8 * 1024)
 
 	// Listen
 	for {

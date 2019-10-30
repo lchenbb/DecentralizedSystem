@@ -1,8 +1,10 @@
 package main
 
 import (
+	"os"
 	"fmt"
 	"flag"
+	"encoding/base64"
 	"strings"
 	"net"
 	"strconv"
@@ -879,7 +881,7 @@ func (g *Gossiper) HandleClient(msg *message.Message) {
 
 		// Step 3. Trigger rumor mongering
 		g.MongerRumor(rumor, "", []string{})
-	case msg.File == nil:
+	case msg.File == nil && msg.Destination != nil:
 		// Handle private message sending
 		// 1. Find next hop router
 		// 2. Create private message with init hop limit and zero id
@@ -888,6 +890,7 @@ func (g *Gossiper) HandleClient(msg *message.Message) {
 
 		// Print dsdv
 		// Step 1
+		fmt.Printf("CLIENT MESSAGE %s dest %s", msg.Text, *msg.Destination)
 		nextHop := g.Dsdv.Map[*msg.Destination]
 
 		// Step 2
@@ -1131,8 +1134,14 @@ func (g *Gossiper) HandleGUI() {
 			Methods("POST", "OPTIONS")
 		r.HandleFunc("/id", g.IDGetHandler).
 			Methods("GET", "OPTIONS")
-
-
+		r.HandleFunc("/routing", g.RoutableGetHandler).
+			Methods("GET", "OPTIONS")
+		r.HandleFunc("/routing", g.PrivateMsgSendHandler).
+			Methods("POST", "OPTIONS")
+		r.HandleFunc("/sharing", g.ShareFileHandler).
+			Methods("POST", "OPTIONS")
+		r.HandleFunc("/request", g.RequestFileHandler).
+			Methods("POST", "OPTIONS")
 		fmt.Printf("Starting webapp on address http://127.0.0.1:%s\n", g.GuiPort)
 
 		srv := &http.Server{
@@ -1173,7 +1182,9 @@ func (g *Gossiper) GetMessages() ([]message.RumorMessage){
 
 		for _, rumor := range list {
 
-			buffer = append(buffer, *rumor)
+			if rumor.Text != "" {
+				buffer = append(buffer, *rumor)
+			}
 		}
 	}
 
@@ -1274,6 +1285,76 @@ func (g *Gossiper) GetPeerID() (ID string) {
 	return
 }
 
+func (g *Gossiper) RoutableGetHandler(w http.ResponseWriter, r *http.Request) {
+
+	enableCors(&w)
+
+	var peers struct {
+		Nodes []string `json:"nodes"`
+	}
+
+	peers.Nodes = g.GetRoutable()
+    
+	json.NewEncoder(w).Encode(peers)
+}
+
+func (g *Gossiper) GetRoutable() ([]string) {
+     
+	routable := make([]string, 0)
+	fmt.Println("TRYING TO GET ROUTABLE")
+	fmt.Println(g.Dsdv.Map)
+	for k, _ := range g.Dsdv.Map {
+
+		routable = append(routable, k)
+	}
+
+	return routable
+}
+
+func (g *Gossiper) PrivateMsgSendHandler(w http.ResponseWriter, r *http.Request) {
+
+	enableCors(&w)
+
+	var messageReceived struct {
+
+		Text string
+		Dest string
+	}
+
+	json.NewDecoder(r.Body).Decode(&messageReceived)
+
+	msg := &message.Message{
+
+		Text : messageReceived.Text,
+		Destination : &messageReceived.Dest,
+	}
+	fmt.Println("TRIGGER HANDLING PRIVATE")
+	go g.HandleClient(msg)
+
+	g.AckPost(true, w)
+}
+
+func (g *Gossiper) ShareFileHandler(w http.ResponseWriter, r *http.Request) {
+
+	enableCors(&w)
+
+	var fileName struct {
+		Name string
+	}
+
+	json.NewDecoder(r.Body).Decode(&fileName)
+
+	// Trigger fileSharer to index that file
+	// TODO: May need to change this func to be concurrent
+	err := g.FileSharer.CreateIndexFile(&fileName.Name)
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+
+	g.AckPost(true, w)
+}
+
 func (g *Gossiper) AckPost(success bool, w http.ResponseWriter) {
 
 	enableCors(&w)
@@ -1284,3 +1365,27 @@ func (g *Gossiper) AckPost(success bool, w http.ResponseWriter) {
 	json.NewEncoder(w).Encode(response)
 }
 
+func (g *Gossiper) RequestFileHandler(w http.ResponseWriter, r *http.Request) {
+
+	enableCors(&w)
+
+	var msg struct {
+
+		Dest string
+		FileName string
+		MetaHash string
+	}
+
+	json.NewDecoder(r.Body).Decode(&msg)
+
+	// Trigger file request sending
+	metaHash, err := base64.URLEncoding.DecodeString(msg.MetaHash)
+	if err != nil {
+
+		fmt.Printf("ERROR (Unable to decode hash)")
+		os.Exit(1)
+	}
+	g.FileSharer.RequestFile(&msg.FileName, &metaHash, &msg.Dest)
+
+	g.AckPost(true, w)
+}

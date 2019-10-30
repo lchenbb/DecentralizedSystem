@@ -61,7 +61,7 @@ type FileSharer struct {
 	Dsdv *routing.DSDV
 }
 
-func (sharer *FileSharer) Request(hashPtr *[]byte, dest string, ch chan *message.DataReply) {
+func (sharer *FileSharer) Request(hashPtr *[]byte, dest string, ch chan *message.DataReply, tmp *[]byte) {
 	// 1. Register requestReplyChannel and ticker
 	// 2. Send request to dest
 	// 3. If timeout: Resend
@@ -69,8 +69,12 @@ func (sharer *FileSharer) Request(hashPtr *[]byte, dest string, ch chan *message
 	// 5. Return failure in request
 
 	
-	go func() {
-		hash := *hashPtr
+		temp := *hashPtr
+		hash := make([]byte, 0)
+		for _, v := range temp {
+			hash = append(hash, v)
+		}
+
 		// Step 1
 		request := &message.DataRequest{
 
@@ -83,7 +87,7 @@ func (sharer *FileSharer) Request(hashPtr *[]byte, dest string, ch chan *message
 
 			DataRequest : request,
 		}
-		fmt.Printf("The hash being sent in REQUEST is %s\n", base64.URLEncoding.EncodeToString(hash))
+
 		replyCh := make(chan *message.DataReply)
 		sharer.RequestReplyChMap.Mux.Lock()
 		sharer.RequestReplyChMap.Map[dest + string(hash)] = replyCh
@@ -95,8 +99,12 @@ func (sharer *FileSharer) Request(hashPtr *[]byte, dest string, ch chan *message
 
 		sharer.N.Send(gossipPacket, sharer.Dsdv.Map[dest])
 
-		fmt.Printf("Sending file request to %s\n", sharer.Dsdv.Map[dest])
+		// fmt.Printf("Sending file request to %s\n", sharer.Dsdv.Map[dest])
 		for {
+
+			if tmp != nil {
+				//fmt.Printf("CHECKPOINT 3.5 chunk 2 hash is %s", base64.URLEncoding.EncodeToString((*tmp)[32: ]))
+			}
 
 			select {
 
@@ -105,7 +113,7 @@ func (sharer *FileSharer) Request(hashPtr *[]byte, dest string, ch chan *message
 				sharer.N.Send(gossipPacket, sharer.Dsdv.Map[dest])
 
 			case reply := <-replyCh:
-				fmt.Println("Getting sth from the reply ch")
+
 				// Step 4: Break and return if empty reply
 				if len(reply.Data) == 0 {
 
@@ -119,22 +127,27 @@ func (sharer *FileSharer) Request(hashPtr *[]byte, dest string, ch chan *message
 				hashValueArray := sha256.Sum256(reply.Data)
 				if bytes.Equal(hashValueArray[:], reply.HashValue) {
 
-					fmt.Println("Server's reply is valid, returning")
+					//fmt.Println("Server's reply is valid, returning")
 					ch<- reply
+
+					if tmp != nil {
+						//fmt.Printf("CHECKPOINT 5 chunk 2 hash is %s", base64.URLEncoding.EncodeToString((*tmp)[32: ]))
+					}
 					return
 				}
 			}
 		}
-	}()
+	
 }
 
 func (sharer *FileSharer) requestMetaFile(metahash []byte, dest string) ([]byte) {
 
-	ch := make(chan *message.DataReply)
+	ch := make(chan *message.DataReply, 1)
 	defer close(ch)
-	sharer.Request(&metahash, dest, ch)
+	sharer.Request(&metahash, dest, ch, nil)
 	reply := <-ch
 
+	fmt.Println("reply", reply)
 	if reply == nil {
 		return nil
 	} else {
@@ -152,12 +165,17 @@ func (sharer *FileSharer) RequestFile(fileNamePtr *string, metahashPtr *[]byte, 
 
 		fmt.Printf("DOWNLOADING metafile of %s from %s\n", fileName, dest)
 		chunkHashes := sharer.requestMetaFile(metahash, dest)
+		backupChunkHashes := make([]byte, 0)
+		for _, v := range chunkHashes {
+			backupChunkHashes = append(backupChunkHashes, v)
+		}
 
 		if chunkHashes != nil {
 
 			// TODO: Modify request chunks to parallel version
-			go func() {
+			
 
+			
 				var wg sync.WaitGroup
 				contentCh := make(chan []byte, len(chunkHashes) / 32)
 
@@ -166,10 +184,17 @@ func (sharer *FileSharer) RequestFile(fileNamePtr *string, metahashPtr *[]byte, 
 
 					wg.Add(1)
 					// Localize chunkhash
-					i := i
-					chunkHash := chunkHashes[i : i + 32]
-					fmt.Printf("DOWNLOADING %s chunk %d from %s with hash %s\n", fileName, i + 1, dest, base64.URLEncoding.EncodeToString(chunkHashes[i : i + 32]))
-					sharer.requestChunk(&chunkHash, dest, contentCh, &wg)
+					chunkHash := make([]byte, 0)
+					for _, v := range chunkHashes[i : i + 32] {
+						chunkHash = append(chunkHash, v)
+					}
+					// fmt.Printf("DOWNLOADING %s chunk %d from %s with hash %s\n", fileName, i + 1, dest, base64.URLEncoding.EncodeToString(chunkHash))
+					
+					// fmt.Printf("BEFORE chunk 2 is %s\n", base64.URLEncoding.EncodeToString(chunkHashes[32 : 64]))
+					sharer.requestChunk(&chunkHash, dest, contentCh, &wg, &chunkHashes)
+
+					// Renew chunkHashes
+					copy(chunkHashes, backupChunkHashes)
 				}
 
 				wg.Wait()
@@ -179,11 +204,15 @@ func (sharer *FileSharer) RequestFile(fileNamePtr *string, metahashPtr *[]byte, 
 				for i := 0; i < len(chunkHashes) / 32; i += 1 {
 
 					chunk := <-contentCh
+					
+					fmt.Printf("Retrived chunk is")
+					fmt.Println(chunk)
+					
 					content = append(content, chunk...)
 				}
 				close(contentCh)
 
-				fmt.Println(content)
+				// fmt.Println(content)
 				file, err := os.Create("_Downloads/" + fileName)
 				if err != nil{
 					fmt.Println(err)
@@ -199,33 +228,44 @@ func (sharer *FileSharer) RequestFile(fileNamePtr *string, metahashPtr *[]byte, 
 				}
 				fmt.Printf("RECONSTRUCTED file %s", fileName)
 				// TODO: Index retrived obj
-			}()
+		
+				byteSlice := []byte{167,20,93,6,234,62,159,34,77,40,7,251,104,235,244,29,151,98,150,23,126,129,72,111,209,173,33,62,115,140,34,8,34,237,248,179,12,16,72,213,73,81,44,33,65,117,175,100,144,188,145,118,196,118,87,155,152,100,236,203,217,14}
+
+				fmt.Println(base64.URLEncoding.EncodeToString(byteSlice))
 		}
 	}()
 }
 
 func (sharer *FileSharer) requestChunk(chunkHashPtr *[]byte, dest string,
 										 contentCh chan []byte,
-										wg *sync.WaitGroup) {
+										wg *sync.WaitGroup,
+										tmp *[]byte) {
 
 	chunkHash := *chunkHashPtr
-	ch := make(chan *message.DataReply)
+
+	// fmt.Printf("IN REQUEST CHUNK, the hash is %s\n", base64.URLEncoding.EncodeToString(chunkHash))
+	// fmt.Printf("CHECK POINT 2 chunk 2 is %s", base64.URLEncoding.EncodeToString((*tmp)[32 : 64]))
+	ch := make(chan *message.DataReply, 1)
 	defer close(ch)
-	sharer.Request(chunkHashPtr, dest, ch)
+	sharer.Request(chunkHashPtr, dest, ch, tmp)
 	reply := <-ch
 
 	if reply == nil {
 
 		wg.Done()
-		fmt.Printf("Fail to request chunk with hash %s from %s",
-					string(chunkHash),
+		fmt.Printf("Fail to request chunk with hash %s from %s\n",
+					base64.URLEncoding.EncodeToString(chunkHash),
 					dest)
 		os.Exit(-1)
 		return
 	} else {
 
 		// Push data into channel
-		contentCh<- reply.Data
+		chunk := make([]byte, len(reply.Data))
+		copy(chunk, reply.Data)
+		contentCh<- chunk
+
+		// fmt.Printf("CHECKPOINT 6 chunk 2 hash is %s", base64.URLEncoding.EncodeToString(chunkHash[32: ]))
 		wg.Done()
 		return
 	}
@@ -250,7 +290,7 @@ func (sharer *FileSharer) HandleReply(wrapped_pkt *message.PacketIncome) {
 	}
 	sharer.RequestReplyChMap.Mux.Unlock()
 
-	fmt.Printf("Receive %v from server\n", dataReply.Data)
+	// fmt.Printf("Receive %v from server\n", dataReply.Data)
 	return
 }
 
@@ -352,6 +392,9 @@ func (sharer *FileSharer) HandleRequest(wrapped_pkt *message.PacketIncome) {
 			HashValue : dataRequest.HashValue,
 			Data : buffer[: bytesread],
 		}
+
+		fmt.Printf("SENDING FILE PART with length %d\n", len(buffer))
+		fmt.Println(dataReply.Data)
 
 		sharer.N.Send(&message.GossipPacket{
 
