@@ -489,8 +489,8 @@ func (g *Gossiper) Update(rumor *message.RumorMessage, sender string) (updated b
 
 				updated = true
 
-				fmt.Println("Receive rumor originated from " + rumor.Origin + " with ID " +
-				 strconv.Itoa(int(rumor.ID)) + " relayed by " + sender)
+				//fmt.Println("Receive rumor originated from " + rumor.Origin + " with ID " +
+				// strconv.Itoa(int(rumor.ID)) + " relayed by " + sender)
 				return
 			}
 		}
@@ -596,7 +596,7 @@ func (g *Gossiper) MongerRumor(rumor *message.RumorMessage, target string, exclu
 
 	// Step 3 
 	// Output mongering msg
-	fmt.Printf("MONGERING with %s\n", peer_addr)
+	// fmt.Printf("MONGERING with %s\n", peer_addr)
 
 	// Monger Rumor to selected peer
 	g.N.Send(&message.GossipPacket{Rumor : rumor,}, peer_addr)
@@ -676,7 +676,7 @@ func (g *Gossiper) HandleStatus(wrapped_pkt *message.PacketIncome) {
 		g.RequestMongering(peer_status_map, sender)
 	default:
 		// Already handled in Ack
-		fmt.Printf("IN SYNC WITH %s\n", sender)
+		// fmt.Printf("IN SYNC WITH %s\n", sender)
 	}
 }
 
