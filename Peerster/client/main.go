@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"flag"
 	"net"
-	
-	"encoding/base64"
+	"os"
+	"encoding/hex"
 	"github.com/dedis/protobuf"
 	"github.com/LiangweiCHEN/Peerster/message"
 )
@@ -35,6 +35,17 @@ func main() {
 
 	UIPort, msg, dest, file, request := input()
 
+	// Handle invalid user input
+	switch {
+	case msg != "" && dest != "" && file == "" && request == "":
+	case msg == "" && dest == "" && file != "" && request == "":
+	case msg == "" && dest != "" && file != "" && request != "":
+	case msg != "" && dest == "" && file == "" && request == "":
+	default:
+		fmt.Printf("ERROR (Bad argument combination)")
+		os.Exit(1)
+	}
+
 	// Create dst address
 	dst_addr, _ := net.ResolveUDPAddr("udp4", ":" + UIPort)
 
@@ -59,10 +70,12 @@ func main() {
 	}
 
 	requestBytes := make([]byte, 32)
-	fmt.Println(request)
-	requestBytes, err := base64.URLEncoding.DecodeString(request)
+	// fmt.Println(request)
+	requestBytes, err := hex.DecodeString(request)
 	if err != nil {
-		fmt.Println(err)
+		// fmt.Println(err)
+		fmt.Printf("ERROR (Unable to decode hex hash)")
+		os.Exit(1)
 		
 	}
 	fmt.Println(len(requestBytes))
@@ -88,7 +101,7 @@ func main() {
 	}
 
 	// Send the msg to the server
-	fmt.Println("Sending to gossiper")
+	// fmt.Println("Sending to gossiper")
 	conn.Write(msg_bytes)
 
 	return
