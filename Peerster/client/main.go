@@ -78,7 +78,7 @@ func main() {
 		os.Exit(1)
 		
 	}
-	fmt.Println(len(requestBytes))
+	// fmt.Println(len(requestBytes))
 	if request == "" {
 		requestPtr = nil
 	} else {
@@ -91,7 +91,7 @@ func main() {
 		Request : requestPtr,
 	}
 
-	//fmt.Println(pkt.Request)
+	fmt.Println(pkt.Request)
 	// Encode the msg
 	msg_bytes, err := protobuf.Encode(pkt)
 

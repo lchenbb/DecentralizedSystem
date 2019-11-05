@@ -7,6 +7,7 @@ import (
 	"sync"
 	//"strconv"
 	//"time"
+	// "encoding/hex"
 	"github.com/dedis/protobuf"
 	// "encoding/base64"
 	"github.com/LiangweiCHEN/Peerster/message"
@@ -83,11 +84,10 @@ func (n *NetworkHandler) Start_sending() {
 func (n *NetworkHandler) Start_listening() {
 
 	// Create buffer and pkt container
-	buffer := make([]byte, 9 * 1024)
 
 	// Listen
 	for {
-
+		buffer := make([]byte, 9 * 1024)
 		packet := new(message.GossipPacket)
 		// fmt.Println("Listening")
 		// Try to collect encoded pkt
@@ -125,11 +125,10 @@ func (n *NetworkHandler) Start_listening() {
 
 func (n *NetworkHandler) Start_listening_client() {
 	// Create buffer and pkt container
-	buffer := make([]byte, 8 * 1024)
 
 	// Listen
 	for {
-
+		buffer := make([]byte, 8 * 1024)
 		packet := new(message.Message)
 		// fmt.Println("Listening")
 		// Try to collect encoded pkt
@@ -146,6 +145,7 @@ func (n *NetworkHandler) Start_listening_client() {
 		protobuf.Decode(buffer[: size], packet)
 
 		// Output packet for testing
+		// fmt.Println(packet.Request)
 		// fmt.Printf("CLIENT MESSAGE %s\n", packet.Simple.Contents)
 
 		// Put pkt into listen channel

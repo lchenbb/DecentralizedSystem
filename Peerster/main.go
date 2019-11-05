@@ -112,7 +112,7 @@ func input() (UIPort string, GuiPort string, gossipAddr string, name string, pee
 
 	flag.IntVar(&antiEntropy, "antiEntropy", 10, "antiEntroypy trigger period")
 
-	flag.IntVar(&rtimer, "rtimer", 1, "Routing heartbeat period")
+	flag.IntVar(&rtimer, "rtimer", 0, "Routing heartbeat period")
 
 	flag.StringVar(&sharedFilePath, "file", "_SharedFiles", "shared file path")
 
@@ -206,7 +206,9 @@ func InitGossiper(UIPort, gossipAddr, name string, simple bool, peers []string, 
 			HopLimit : g.HopLimit,
 			Origin : g.Name,
 			RequestTimeout : 15,
-			IndexFileMap : make(map[string]*fileSharing.IndexFile),
+			IndexFileMap : &fileSharing.IndexFileMap{
+				Map : make(map[string]*fileSharing.IndexFile),
+			},
 			ChunkHashMap : &fileSharing.ChunkHashMap{
 				Map : make(map[string]bool),
 			},
@@ -214,6 +216,7 @@ func InitGossiper(UIPort, gossipAddr, name string, simple bool, peers []string, 
 			Downloading : &fileSharing.Downloading{
 				Map : make(map[string]chan *message.DataReply),
 			},
+			//FileLocker : make(map[string]*sync.Mutex),
 		}
 	return 
 }
@@ -300,6 +303,7 @@ func (gossiper *Gossiper) Start_handling() {
 
 		for pkt := range gossiper.N.Listen_ch {
 
+			pkt := pkt
 			// Start handling packet content
 			switch {
 
@@ -362,7 +366,6 @@ func (gossiper *Gossiper) Start_handling() {
 
 		for msg := range gossiper.N.Client_listen_ch {
 
-			// fmt.Println("Receiving clinet msg")
 			gossiper.HandleClient(msg)
 		}
 	}()
@@ -507,8 +510,8 @@ func (g *Gossiper) Update(rumor *message.RumorMessage, sender string) (updated b
 		g.RumorBuffer.Mux.Unlock()
 		updated = true
 
-		fmt.Println("Receive rumor originated from " + rumor.Origin + " with ID " + strconv.Itoa(int(rumor.ID)) +
-		  " relayed by " + sender)
+		// fmt.Println("Receive rumor originated from " + rumor.Origin + " with ID " + strconv.Itoa(int(rumor.ID)) +
+		//   " relayed by " + sender)
 		return
 	}
 
@@ -908,7 +911,7 @@ func (g *Gossiper) HandleClient(msg *message.Message) {
 
 		// Print dsdv
 		// Step 1
-		fmt.Printf("CLIENT MESSAGE %s dest %s", msg.Text, *msg.Destination)
+		fmt.Printf("CLIENT MESSAGE %s dest %s\n", msg.Text, *msg.Destination)
 		nextHop := g.Dsdv.Map[*msg.Destination]
 
 		// Step 2
@@ -929,14 +932,15 @@ func (g *Gossiper) HandleClient(msg *message.Message) {
 		// Handle File indexing
 		// 1. Trigger fileSharing obj indexing
 
-		g.FileSharer.CreateIndexFile(msg.File)
+		go g.FileSharer.CreateIndexFile(msg.File)
 		// fmt.Printf("Indexing %s", *msg.File)
 
 	case msg.File != nil && msg.Request != nil:
 		// Handle file request
 		// 1. Trigger fileSharing obj requesting
 
-		g.FileSharer.RequestFile(msg.File, msg.Request, msg.Destination)
+		// fmt.Printf("SEND REQUEST FOR %s TO %v\n", hex.EncodeToString(*msg.Request), msg.Destination)
+		go g.FileSharer.RequestFile(msg.File, msg.Request, msg.Destination)
 		// fmt.Printf("Requesting %s from %s with hash %v\n", *msg.File, *msg.Destination, *msg.Request)
 
 	}
@@ -1056,7 +1060,7 @@ func (g *Gossiper) FlipCoinMonger(rumor *message.RumorMessage, excluded []string
 			return
 		} else {
 
-			fmt.Printf("FLIPPED COIN sending rumor to %s\n", peer_addr)
+			// fmt.Printf("FLIPPED COIN sending rumor to %s\n", peer_addr)
 			g.MongerRumor(rumor, peer_addr, []string{})
 		}
 	}
@@ -1093,8 +1097,8 @@ func (g *Gossiper) StartHeartbeat() {
 		/* Need modification if heartbeat start from init */
 		
 		g.StatusBuffer.Mux.Lock()
+		g.RumorBuffer.Mux.Lock()
 		g.StatusBuffer.Status[g.Name] = 2
-		g.StatusBuffer.Mux.Unlock()
 
 
 		rumor := &message.RumorMessage{
@@ -1103,10 +1107,10 @@ func (g *Gossiper) StartHeartbeat() {
 			Text : "",
 		}
 		// fmt.Printf("Initial rumor is %d", 1)
-		
-		g.RumorBuffer.Mux.Lock()
+	
 		g.RumorBuffer.Rumors[g.Name] = append(g.RumorBuffer.Rumors[g.Name], rumor)
 		g.RumorBuffer.Mux.Unlock()
+		g.StatusBuffer.Mux.Unlock()
 
 		g.MongerRumor(rumor, "", nil)
 
@@ -1118,17 +1122,17 @@ func (g *Gossiper) StartHeartbeat() {
 
 			// Periodically heartbeat
 			g.StatusBuffer.Mux.Lock()
+			g.RumorBuffer.Mux.Lock()
 			id := g.StatusBuffer.Status[g.Name]
 			g.StatusBuffer.Status[g.Name] += 1
-			g.StatusBuffer.Mux.Unlock()
 
 			rumor := &message.RumorMessage{
 				Origin : g.Name,
 				ID : uint32(id),
 				Text : "",
 			}
-			g.RumorBuffer.Mux.Lock()
 			g.RumorBuffer.Rumors[g.Name] = append(g.RumorBuffer.Rumors[g.Name], rumor)
+			g.StatusBuffer.Mux.Unlock()
 			g.RumorBuffer.Mux.Unlock()
 			g.MongerRumor(rumor, "", nil)
 			// fmt.Println("Heartbeating......", id)
@@ -1139,6 +1143,7 @@ func (g *Gossiper) StartHeartbeat() {
 
 /*****************************************************/
 // GUI Handling
+
 func (g *Gossiper) HandleGUI() {
 
 	// Register router

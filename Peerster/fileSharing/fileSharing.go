@@ -56,23 +56,29 @@ type FileSharer struct {
 	HopLimit uint32
 	Origin string
 	RequestTimeout int
-	IndexFileMap map[string]*IndexFile
+	IndexFileMap *IndexFileMap 
 	ChunkHashMap *ChunkHashMap
 	Dsdv *routing.DSDV
 	Downloading *Downloading 
+	FileLocker map[string]*sync.Mutex
 }
 
 type Downloading struct {
 	Map map[string]chan *message.DataReply
 	Mux sync.Mutex
 }
+
+type IndexFileMap struct {
+	Map map[string]*IndexFile
+	Mux sync.Mutex
+}
+
 func (sharer *FileSharer) Request(hashPtr *[]byte, dest string, ch chan *message.DataReply, notification string) {
 	// 1. Register requestReplyChannel and ticker
 	// 2. Send request to dest
 	// 3. If timeout: Resend
 	// 4. If receive reply from requestReplyChannel and not empty: trigger requestChunk
 	// 5. Return failure in request
-
 	
 		temp := *hashPtr
 		hash := make([]byte, 0)
@@ -120,7 +126,7 @@ func (sharer *FileSharer) Request(hashPtr *[]byte, dest string, ch chan *message
 				if len(reply.Data) == 0 {
 
 					// fmt.Println(request.HashValue)
-					fmt.Printf("Peer %s does not contain value for hash %s\n", request.Origin, hex.EncodeToString(request.HashValue))
+					fmt.Printf("Peer %s does not contain value for hash %s\n", request.Destination, hex.EncodeToString(request.HashValue))
 					ch<- nil
 					return
 				}
@@ -129,9 +135,12 @@ func (sharer *FileSharer) Request(hashPtr *[]byte, dest string, ch chan *message
 				hashValueArray := sha256.Sum256(reply.Data)
 				if bytes.Equal(hashValueArray[:], reply.HashValue) {
 
-					//fmt.Println("Server's reply is valid, returning")
+					// fmt.Println("Server's reply is valid, returning")
 					ch<- reply
 					return
+				} else {
+					fmt.Printf("SERVER RESPONSE IS INVALID\n")
+					os.Exit(1)
 				}
 			}
 		}
@@ -141,10 +150,14 @@ func (sharer *FileSharer) Request(hashPtr *[]byte, dest string, ch chan *message
 func (sharer *FileSharer) requestMetaFile(metahash []byte, dest string, notification string) ([]byte) {
 
 	ch := make(chan *message.DataReply, 1)
-	defer close(ch)
-	sharer.Request(&metahash, dest, ch, notification)
+	go sharer.Request(&metahash, dest, ch, notification)
 	reply := <-ch
+	close(ch)
 
+	// Handle the destination has no corresponding metafile 
+	if reply == nil {
+		return nil
+	}
 	// Store metafile to local if it does not exist
 	file, err := os.Create(sharer.Indexer.SharedFolder +  "/" + hex.EncodeToString(metahash) + "_meta")
 	if err != nil{
@@ -161,8 +174,9 @@ func (sharer *FileSharer) requestMetaFile(metahash []byte, dest string, notifica
 		os.Exit(1)
 	}
 
-	sharer.IndexFileMap[string(metahash)] = nil
-
+	sharer.IndexFileMap.Mux.Lock()
+	sharer.IndexFileMap.Map[string(metahash)] = nil
+	sharer.IndexFileMap.Mux.Unlock()
 	// fmt.Println("reply", reply)
 	if reply == nil {
 		return nil
@@ -173,10 +187,10 @@ func (sharer *FileSharer) requestMetaFile(metahash []byte, dest string, notifica
 
 func (sharer *FileSharer) RequestFile(fileNamePtr *string, metahashPtr *[]byte, destPtr *string) {
 
-	go func() {
 		// Localize the variables 
 		fileName := *fileNamePtr
-		metahash := *metahashPtr
+		metahash := make([]byte, len(*metahashPtr))
+		copy(metahash, *metahashPtr)
 		dest := *destPtr
 
 		metaNotification := fmt.Sprintf("DOWNLOADING metafile of %s from %s\n", fileName, dest)
@@ -184,7 +198,7 @@ func (sharer *FileSharer) RequestFile(fileNamePtr *string, metahashPtr *[]byte, 
 
 		// fmt.Println("Finish metafile request")
 		// Return if chunkHash is empty
-		if len(chunkHashes) == 0 {
+		if chunkHashes == nil {
 			return
 		}
 
@@ -248,13 +262,13 @@ func (sharer *FileSharer) RequestFile(fileNamePtr *string, metahashPtr *[]byte, 
 						downloadCh<- reply
 					}
 				}
+				
 				close(contentCh)
 
 				// TODO: Index retrived obj
 	
 				// fmt.Println(hex.EncodeToString(byteSlice))
 		}
-	}()
 }
 
 func (sharer *FileSharer) requestChunk(chunkHashPtr *[]byte, dest string,
@@ -306,12 +320,14 @@ func (sharer *FileSharer) HandleReply(wrapped_pkt *message.PacketIncome) {
 
 	// Step 1
 	dataReply := wrapped_pkt.Packet.DataReply
-	tmp := sha256.Sum256(dataReply.Data)
+	// tmp := sha256.Sum256(dataReply.Data)
+	/*
 	if (bytes.Compare(tmp[:], dataReply.HashValue)) != 0 {
 		fmt.Println("Invalid reply")
 		return
 	}
-
+	*/
+	// fmt.Printf("RECEIVING REPLY FROM %s WITH HASH %s\n", dataReply.Origin, hex.EncodeToString(dataReply.HashValue))
 	key := dataReply.Origin + string(dataReply.HashValue)
 	sharer.RequestReplyChMap.Mux.Lock()
 	if ch, ok := sharer.RequestReplyChMap.Map[key]; ok {
@@ -336,15 +352,18 @@ func (sharer *FileSharer) HandleRequest(wrapped_pkt *message.PacketIncome) {
 
 	// Step 1
 	dataRequest := wrapped_pkt.Packet.DataRequest
-	hash := dataRequest.HashValue
+	hash := make([]byte, len(dataRequest.HashValue))
+	copy(hash, dataRequest.HashValue)
 	key := string(hash)
 	// key := hex.EncodeToString(hash)
 
-	if _, ok := sharer.IndexFileMap[key]; ok{
+	sharer.IndexFileMap.Mux.Lock()
+	_, fileExist := sharer.IndexFileMap.Map[key]
+	sharer.IndexFileMap.Mux.Unlock()
+	if fileExist{
 		// Handle the case where a metaFile exists locally is requested
 
 		// Open file and metafile
-		// fmt.Printf("Opening %s\n", sharer.Indexer.SharedFolder + "/" + indexFile.MetaFileName)
 		metaFile, err := os.Open(sharer.Indexer.SharedFolder + "/" + hex.EncodeToString(hash) + "_meta")
 		if err != nil {
 			fmt.Println(err)
@@ -353,38 +372,24 @@ func (sharer *FileSharer) HandleRequest(wrapped_pkt *message.PacketIncome) {
 		defer metaFile.Close()
 
 		// Store chunks in chunkHashMap
-		chunkHash := make([]byte, 32)
-		metafile := make([]byte, 0)
-
+		metafile := make([]byte, 32 * 256)
+		n, err := metaFile.Read(metafile)
+		metafile = metafile[: n]
+		if err != nil {
+			fmt.Println(err)
+			return
+		}
 		// TODO: Prevent duplicated put chunk hash into map
-		for {
+		for i := 0; i < n; i += 32{
 
-			// Read current chunk hash and put it in chunkHashMap
-			bytesread, err := metaFile.Read(chunkHash)
-			if err != nil {
-				if err != io.EOF {
-					fmt.Println(err)
-					return
-				}
-
-				// End reading if EOF
-				break
-			}
-
-			if bytesread != 32 {
-				fmt.Println("Invalid SHA256 hash")
-				return
-			}
-
-			// fmt.Printf("Reading chunk hash %s", string(chunkHash))
-			metafile = append(metafile, chunkHash...)
 			// TODO: check whether there is need for lock
 			sharer.ChunkHashMap.Mux.Lock()
-			sharer.ChunkHashMap.Map[string(chunkHash)] = true
+			sharer.ChunkHashMap.Map[string(metafile[i : i + 32])] = true
 			sharer.ChunkHashMap.Mux.Unlock()
 		}
-
-		// fmt.Println("Finished obtaining metafile")
+		
+		// fmt.Printf("HANDLING REQUEST FROM %s FOR %s\n", dataRequest.Origin, hex.EncodeToString(dataRequest.HashValue))
+		// fmt.Printf("SENDING BACK %s\n", hex.EncodeToString(hash))
 		// Send back metaFile
 		sharer.N.Send(&message.GossipPacket{
 
@@ -393,14 +398,25 @@ func (sharer *FileSharer) HandleRequest(wrapped_pkt *message.PacketIncome) {
 				Origin : sharer.Origin,
 				Destination : dataRequest.Origin,
 				HopLimit : sharer.HopLimit,
-				HashValue : dataRequest.HashValue,
+				HashValue : hash,
 				Data : metafile,
 			},
 		}, sharer.Dsdv.Map[dataRequest.Origin])
-	} else if _, ok := sharer.ChunkHashMap.Map[key]; ok {
+	} else {
+		sharer.ChunkHashMap.Mux.Lock()
+		_, chunkExists := sharer.ChunkHashMap.Map[key]
+		sharer.ChunkHashMap.Mux.Unlock()
+		if chunkExists{
 		// Handle the case where a chunk exists locally is requested
 
 		// Read chunk from storage
+		/*
+		if _, ok := sharer.FileLocker[hex.EncodeToString(hash)]; !ok {
+			sharer.FileLocker[hex.EncodeToString(hash)] = &sync.Mutex{}
+		}
+		sharer.FileLocker[hex.EncodeToString(hash)].Lock()
+		defer sharer.FileLocker[hex.EncodeToString(hash)].Unlock()
+		*/
 		chunkFile, err := os.Open(sharer.Indexer.SharedFolder + "/" + hex.EncodeToString(hash))
 		// fmt.Printf("Openning %s\n", sharer.Indexer.SharedFolder + "/" + hex.EncodeToString(hash))
 		if err != nil {
@@ -432,30 +448,41 @@ func (sharer *FileSharer) HandleRequest(wrapped_pkt *message.PacketIncome) {
 		sharer.N.Send(&message.GossipPacket{
 
 			DataReply : dataReply,
-		}, sharer.Dsdv.Map[dataReply.Destination])
-	} else {
-		// The requested stuff does not exist locally, send empty reply back
+			}, sharer.Dsdv.Map[dataReply.Destination])
+		} else {
+			// The requested stuff does not exist locally, send empty reply back
 
-		dataReply := &message.DataReply{
+			fmt.Printf("NO DATA FOR REQUEST %s FROM %s", hex.EncodeToString(dataRequest.HashValue), dataRequest.Origin)
+			dataReply := &message.DataReply{
 
-			Origin : sharer.Origin,
-			Destination : dataRequest.Origin,
-			HopLimit : sharer.HopLimit,
-			HashValue : dataRequest.HashValue,
-			Data : make([]byte, 0),
+				Origin : sharer.Origin,
+				Destination : dataRequest.Origin,
+				HopLimit : sharer.HopLimit,
+				HashValue : hash,
+				Data : make([]byte, 0),
+			}
+
+			sharer.N.Send(&message.GossipPacket{
+
+				DataReply : dataReply,
+			}, sharer.Dsdv.Map[dataReply.Destination])
 		}
-
-		sharer.N.Send(&message.GossipPacket{
-
-			DataReply : dataReply,
-		}, sharer.Dsdv.Map[dataReply.Destination])
 	}
 }
 
 func (sharer *FileSharer) CreateIndexFile(fileNamePtr *string) (err error) {
 
+	/*
+	if _, ok := sharer.FileLocker[*fileNamePtr]; !ok {
+		sharer.FileLocker[*fileNamePtr] = &sync.Mutex{}
+	} 
+	sharer.FileLocker[*fileNamePtr].Lock()
+	defer sharer.FileLocker[*fileNamePtr].Unlock()
+	*/
 	indexFile, err := sharer.Indexer.CreateIndexFile(fileNamePtr)
-	sharer.IndexFileMap[string(indexFile.MetaFileHash)] = indexFile
+	sharer.IndexFileMap.Mux.Lock()
+	sharer.IndexFileMap.Map[string(indexFile.MetaFileHash)] = indexFile
+	sharer.IndexFileMap.Mux.Unlock()
 	// fmt.Printf("Create index file for %s with value %v named %s\n", indexFile.FileName,
 	// 															 indexFile.MetaFileHash,
 	// 															  string(indexFile.MetaFileHash))
@@ -659,6 +686,8 @@ func (sharer *FileSharer) HandleDownloading(fileName, metaHashStr string, chunkH
 	fmt.Printf("RECONSTRUCTED file %s\n", fileName)
 }
 
+/* This function is just for fileSharing testing purpose 
+	Modify the package to main to enable testing */
 func main() {
 
 	indexer := FileIndexer{
