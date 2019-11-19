@@ -41,7 +41,7 @@ sleep 1
 sleep 1
 ./Peerster -gossipAddr=127.0.0.1:5005  -peers=127.0.0.1:5003 -name=E -UIPort=8005 -rtimer=1 > E.txt &
 
-sleep 20
+sleep 8
 cd client/
 ./client -UIPort=8001 -file=QishanWang.png &
 ./client -UIPort=8005 -file=Shaokang.png &
@@ -58,7 +58,7 @@ sleep 1
 
 cd ..
 
-sleep 20
+sleep 15
 pkill -f Peerster
 rm Peerster
 cd client
