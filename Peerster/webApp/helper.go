@@ -1,4 +1,8 @@
 package webApp
+
+import (
+	
+)
 /*****************************************************/
 // GUI Handling
 func (g *Gossiper) HandleGUI() {

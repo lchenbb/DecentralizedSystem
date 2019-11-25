@@ -1,6 +1,6 @@
 $(document).ready(function(){
 
-	var guiport = "13081"
+	var guiport = prompt("PLEASE INPUT THE GUIPORT", 13081)
 	var url = "http://127.0.0.1:" + guiport + "/"
 	// Get id
 	$.ajax({
@@ -11,7 +11,7 @@ $(document).ready(function(){
 
 			console.log(json)
 			var ID = json.id
-
+			console.log("id is " + ID)
 			$("#NodeID").append("<P>" + ID)
 		}
 	})

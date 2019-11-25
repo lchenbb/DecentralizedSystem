@@ -41,6 +41,7 @@ type Gossiper struct {
 	HopLimit uint32
 	SharedFilePath string
 	FileSharer *fileSharing.FileSharer
+	SearchDistributeCh chan *message.SearchRequestRelayer
 }
 
 type PeerStatus struct {
@@ -192,6 +193,7 @@ func InitGossiper(UIPort, gossipAddr, name string, simple bool, peers []string, 
 		RTimer : rtimer,
 		HopLimit : uint32(10),
 		SharedFilePath : sharedFilePath,
+		SearchDistributeCh : make(chan *message.SearchRequestRelayer),
 	}
 
 	g.FileSharer = &fileSharing.FileSharer{
@@ -216,7 +218,36 @@ func InitGossiper(UIPort, gossipAddr, name string, simple bool, peers []string, 
 			Downloading : &fileSharing.Downloading{
 				Map : make(map[string]chan *message.DataReply),
 			},
-			//FileLocker : make(map[string]*sync.Mutex),
+			FileLocker : &fileSharing.FileLocker{
+				Map : make(map[string]*sync.Mutex),
+			},
+			MetaFileMap : &fileSharing.MetaFileMap{
+				MetaFile : make(map[string][]byte),
+			},
+			ChunkMap : &fileSharing.ChunkMap{
+				Chunks : make(map[string][]byte),
+			},
+			SearchDistributeCh : g.SearchDistributeCh,
+			SearchReqMap : &fileSharing.SearchReqMap{
+				Map : make(map[string]bool),
+			},
+			Searcher : &fileSharing.Searcher{
+				SendCh : make(chan *message.SearchRequest),
+				ReplyCh : make(chan *message.SearchReply),
+				Target : &fileSharing.Target{
+						Map : make(map[string][]fileSharing.ChunkDest),
+				},
+				TargetMetahash : &fileSharing.TargetMetahash{
+					Map : make(map[string][]byte),
+				},
+				TargetMetaFile : &fileSharing.TargetMetaFile{
+					Map : make(map[string][]byte),
+				},
+				Threshold : 2,
+				InitBudget : 2,
+				MaxBudget : 32,
+				SearchedFileDownloadCh : make(chan *fileSharing.WrappedDownloadRequest),
+			},
 		}
 	return 
 }
@@ -232,36 +263,6 @@ func main() {
 	// Start gossiper's work
 	g.Start_working()
 
-	// Send sth using network
-	/*
-	fmt.Println("Start Sending")
-	msgs := make([]*message.GossipPacket, 0)
-	for i := 1; i < 10; i += 1 {
-		msgs = append(msgs, &message.GossipPacket{
-			Rumor : &message.RumorMessage{
-				Origin : g.Name, 
-				ID : uint32(i),
-				Text : "greeting from " + g.Name + " " + strconv.Itoa(i), 
-			},
-		})
-	}
-	g.RumorBuffer.Rumors[g.Name] = make([]*message.RumorMessage, 0)
-	for i, msg := range msgs {
-		time.Sleep(1 * time.Second)
-		g.StatusBuffer.Mux.Lock()
-		g.StatusBuffer.Status[g.Name] = uint32(i + 2)
-		g.RumorBuffer.Mux.Lock()
-		g.RumorBuffer.Rumors[g.Name] = append(g.RumorBuffer.Rumors[g.Name], msg.Rumor)
-		g.RumorBuffer.Mux.Unlock()
-		g.StatusBuffer.Mux.Unlock()
-		g.Peers.Mux.Lock()
-		for _, peer_addr := range g.Peers.Peers {
-			fmt.Println("Sending " + msg.Rumor.Text + " to peer " + peer_addr)
-			g.N.Send(msg, peer_addr)
-		}
-		g.Peers.Mux.Unlock()
-	}
-	*/
 	// TODO: Set terminating condition
 	for {
 		time.Sleep(10 * time.Second)
@@ -279,6 +280,9 @@ func (gossiper *Gossiper) Start_working() {
 	// Start Receiving
 	gossiper.Start_handling()
 
+	// Start search sending
+	gossiper.Start_searching()
+
 	// Start antiEntropy sending
 	if !gossiper.Simple {
 		gossiper.Start_antiEntropy()
@@ -293,6 +297,9 @@ func (gossiper *Gossiper) Start_working() {
 	gossiper.StartHeartbeat()
 
 	gossiper.HandleGUI()
+
+	// Start handling downloading after search
+	go gossiper.FileSharer.HandleSearchedFileDownload()
 }
 
 
@@ -342,7 +349,10 @@ func (gossiper *Gossiper) Start_handling() {
 				if pkt.Packet.DataRequest.Destination != gossiper.Name {
 					pkt.Packet.DataRequest.HopLimit -= 1
 					if pkt.Packet.DataRequest.HopLimit > 0 {
-						gossiper.N.Send(pkt.Packet, gossiper.Dsdv.Map[pkt.Packet.DataRequest.Destination])
+						gossiper.Dsdv.Mux.Lock()
+						nextHop := gossiper.Dsdv.Map[pkt.Packet.DataRequest.Destination]
+						gossiper.Dsdv.Mux.Unlock()
+						gossiper.N.Send(pkt.Packet, nextHop)
 					}
 				} else {
 					go gossiper.FileSharer.HandleRequest(pkt)
@@ -353,12 +363,36 @@ func (gossiper *Gossiper) Start_handling() {
 				if pkt.Packet.DataReply.Destination != gossiper.Name {
 					pkt.Packet.DataReply.HopLimit -= 1
 					if pkt.Packet.DataReply.HopLimit > 0 {
-						gossiper.N.Send(pkt.Packet, gossiper.Dsdv.Map[pkt.Packet.DataReply.Destination])
+						// Log forwarding information
+						gossiper.Dsdv.Mux.Lock()
+						nextHop := gossiper.Dsdv.Map[pkt.Packet.DataReply.Destination]
+						gossiper.Dsdv.Mux.Unlock()
+						gossiper.N.Send(pkt.Packet, nextHop)
 					}
 				} else {
 					go gossiper.FileSharer.HandleReply(pkt)
 				}
+			case pkt.Packet.SearchRequest != nil:
+				// Trigger request handling in sharer
+				go gossiper.FileSharer.HandleSearch(pkt.Packet.SearchRequest, pkt.Sender)
+			case pkt.Packet.SearchReply != nil:
+				// Trigger search reply handling
+				// TODO: Increase the parallel degree of reply handling
+				if pkt.Packet.SearchReply.Destination != gossiper.Name {
+					pkt.Packet.SearchReply.HopLimit -= 1
+					if pkt.Packet.SearchReply.HopLimit > 0{
+						gossiper.Dsdv.Mux.Lock()
+						nextHop := gossiper.Dsdv.Map[pkt.Packet.SearchReply.Destination]
+						gossiper.Dsdv.Mux.Unlock()
+						gossiper.N.Send(pkt.Packet, nextHop)
+					}
+				} else {
+					if gossiper.FileSharer.Searcher.ReplyCh != nil {
+						gossiper.FileSharer.Searcher.ReplyCh<- pkt.Packet.SearchReply
+					}
+				}
 			}
+			
 		}
 	}()
 
@@ -536,11 +570,11 @@ func (g *Gossiper) MongerRumor(rumor *message.RumorMessage, target string, exclu
 	// fmt.Println("ID is ", rumor.ID, "Excluded are", excluded)
 	if target == "" {
 		var ok bool
-		peer_addr, ok = g.SelectRandomPeer(excluded)
-
+		peer_addr_slice, ok := g.SelectRandomPeer(excluded, 1)
 		if !ok {
 			return
 		}
+		peer_addr = peer_addr_slice[0]
 	} else {
 
 		peer_addr = target
@@ -606,7 +640,7 @@ func (g *Gossiper) MongerRumor(rumor *message.RumorMessage, target string, exclu
 }
 
 
-func (g *Gossiper) SelectRandomPeer(excluded []string) (rand_peer_addr string, ok bool) {
+func (g *Gossiper) SelectRandomPeer(excluded []string, n int) (rand_peer_addr []string, ok bool) {
 
 	g.Peers.Mux.Lock()
 	defer g.Peers.Mux.Unlock()
@@ -635,12 +669,30 @@ func (g *Gossiper) SelectRandomPeer(excluded []string) (rand_peer_addr string, o
 	// Return if no available peer exists
 	if len(available_peers) == 0 {
 		ok = false
+
 		return
 	}
 
-	// Get a rand peer addr
-	rand_peer_addr = available_peers[rand.Intn(len(available_peers))]
-	ok = true
+	// Get max(n, len(available_peers)) random neighbour
+	selected := make(map[int]bool)
+	if n > len(available_peers) {
+		rand_peer_addr = available_peers
+		ok = true
+	} else {
+		count := 0
+		for {
+			next := rand.Intn(len(available_peers))
+			if _, ok := selected[next]; !ok {
+				selected[next] = true
+				count += 1
+				rand_peer_addr = append(rand_peer_addr, available_peers[next])
+			}
+			if count == n {
+				ok = true
+				return
+			}
+		}
+	}
 	return
 }
 
@@ -869,7 +921,7 @@ func (g *Gossiper) HandleClient(msg *message.Message) {
 			g.N.Send(pkt, peer_addr)	
 		}
 		g.Peers.Mux.Unlock()
-	case msg.Destination == nil && msg.File == nil:
+	case msg.Destination == nil && msg.File == nil && len(msg.Text) != 0:
 		// Handle mongering rumor case
 
 		// Step 1. Construct rumor message
@@ -912,8 +964,9 @@ func (g *Gossiper) HandleClient(msg *message.Message) {
 		// Print dsdv
 		// Step 1
 		fmt.Printf("CLIENT MESSAGE %s dest %s\n", msg.Text, *msg.Destination)
+		g.Dsdv.Mux.Lock()
 		nextHop := g.Dsdv.Map[*msg.Destination]
-
+		g.Dsdv.Mux.Unlock()
 		// Step 2
 		privatePkt := &message.GossipPacket{
 			Private : &message.PrivateMessage{
@@ -935,13 +988,21 @@ func (g *Gossiper) HandleClient(msg *message.Message) {
 		go g.FileSharer.CreateIndexFile(msg.File)
 		// fmt.Printf("Indexing %s", *msg.File)
 
-	case msg.File != nil && msg.Request != nil:
+	case msg.File != nil && msg.Request != nil && msg.Destination != nil:
 		// Handle file request
 		// 1. Trigger fileSharing obj requesting
 
 		// fmt.Printf("SEND REQUEST FOR %s TO %v\n", hex.EncodeToString(*msg.Request), msg.Destination)
 		go g.FileSharer.RequestFile(msg.File, msg.Request, msg.Destination)
 		// fmt.Printf("Requesting %s from %s with hash %v\n", *msg.File, *msg.Destination, *msg.Request)
+	
+	case msg.File != nil && msg.Request != nil && msg.Destination == nil:
+		// Trigger downloading searched file
+		go g.FileSharer.Searcher.RequestSearchedFile(*msg.File, *msg.Request)
+	case len(msg.Keywords) > 0:
+		// Trigger file search
+		fmt.Printf("CLIENT WANT TO SEARCH FOR %s\n", strings.Join(msg.Keywords, ","))
+		g.FileSharer.Searcher.Search(msg.Keywords, int(msg.Budget))
 
 	}
 }
@@ -1029,7 +1090,9 @@ func (g *Gossiper) HandlePrivateMsg(wrapped_pkt *message.PacketIncome) {
 	}
 
 	// Step 3
+	g.Dsdv.Mux.Lock()
 	nextHop := g.Dsdv.Map[pkt.Private.Destination]
+	g.Dsdv.Mux.Unlock()
 	g.N.Send(pkt, nextHop)
 }
 // Handle timeout resend
@@ -1055,13 +1118,13 @@ func (g *Gossiper) FlipCoinMonger(rumor *message.RumorMessage, excluded []string
 		return
 	} else {
 
-		if peer_addr, ok := g.SelectRandomPeer(excluded); !ok {
+		if peer_addr_slice, ok := g.SelectRandomPeer(excluded, 1); !ok {
 
 			return
 		} else {
 
 			// fmt.Printf("FLIPPED COIN sending rumor to %s\n", peer_addr)
-			g.MongerRumor(rumor, peer_addr, []string{})
+			g.MongerRumor(rumor, peer_addr_slice[0], []string{})
 		}
 	}
 }
@@ -1082,6 +1145,60 @@ func (g *Gossiper) PrintPeers() {
 	fmt.Print(outputString)
 }
 
+func (g *Gossiper) DistributeSearch() {
+	// Distribute the request to neighbours aprt from replayer evenly
+
+	for requestRelayer := range g.SearchDistributeCh {
+
+		rand_peer_slice, ok := g.SelectRandomPeer([]string{requestRelayer.Relayer}, 
+							int(requestRelayer.SearchRequest.Budget))
+		if !ok {
+			fmt.Println("CANNOT FIND A RANDOM PEER TO RELAY!!!")
+			continue
+		}
+		// Trigger search with budget 1 if len(rand_peer_slice) == request.Budget
+		budget := int(requestRelayer.SearchRequest.Budget)
+		if len(rand_peer_slice) == budget {
+
+			for _, peer := range rand_peer_slice {
+				fmt.Printf("RELAYING SEARCH REQUEST FOR %s TO %s WITH BUDGET %d\n",
+				 	strings.Join(requestRelayer.SearchRequest.Keywords, ","),
+					peer,
+					1)
+				g.N.Send(&message.GossipPacket{
+					SearchRequest : &message.SearchRequest{
+						Origin : requestRelayer.SearchRequest.Origin,
+						Budget : uint64(1),
+						Keywords : requestRelayer.SearchRequest.Keywords,
+					}, 
+				}, peer)
+			}
+		} else {
+			// Trigger send with most average budget if len(rand_per_slice) < request.Budget
+			low_budget := budget / len(rand_peer_slice)
+			high_budget_peer := budget % len(rand_peer_slice)
+			for _, peer := range rand_peer_slice {
+				var budget_to_send int
+				if high_budget_peer > 0 {
+					budget_to_send = low_budget + 1
+				} else {
+					budget_to_send = low_budget
+				}
+				fmt.Printf("RELAYING SEARCH REQUEST FOR %s TO %s WITH BUDGET %d\n",
+				 	strings.Join(requestRelayer.SearchRequest.Keywords, ","),
+					peer,
+					budget_to_send)
+				g.N.Send(&message.GossipPacket{
+					SearchRequest : &message.SearchRequest{
+						Origin : requestRelayer.SearchRequest.Origin,
+						Budget : uint64(budget_to_send),
+						Keywords : requestRelayer.SearchRequest.Keywords,
+					},
+				}, peer)
+			}
+		}
+	}
+}
 
 func (g *Gossiper) StartHeartbeat() {
 
@@ -1135,12 +1252,38 @@ func (g *Gossiper) StartHeartbeat() {
 			g.StatusBuffer.Mux.Unlock()
 			g.RumorBuffer.Mux.Unlock()
 			g.MongerRumor(rumor, "", nil)
-			// fmt.Println("Heartbeating......", id)
+			fmt.Println("Heartbeating......", id)
 		}
 		
 	}()
 }
 
+func (g *Gossiper) TriggerSearch() {
+
+	go func() {
+
+		for request := range g.FileSharer.Searcher.SendCh {
+
+			target_addr, ok := g.SelectRandomPeer([]string{}, 1)
+			if !ok {
+				return
+			}
+
+			request.Origin = g.Name
+			g.N.Send(&message.GossipPacket{
+
+				SearchRequest : request,
+			}, target_addr[0])
+
+			fmt.Printf("SENDING REQUEST FOR %s with budget %d\n", strings.Join(request.Keywords, ","), request.Budget)
+		}
+	}() 	
+}
+
+func (g *Gossiper) Start_searching() {
+	go g.TriggerSearch()
+	go g.DistributeSearch()
+}
 /*****************************************************/
 // GUI Handling
 
@@ -1237,19 +1380,12 @@ func (g *Gossiper) MessagePostHandler(w http.ResponseWriter, r *http.Request) {
 func (g *Gossiper) PostNewMessage(text string) {
 
 	// Create Simple msg
-	wrapped_pkt := &message.PacketIncome{
-					Packet: &message.GossipPacket{
-								Simple : &message.SimpleMessage{
-									OriginalName : "client",
-									RelayPeerAddr : "",
-									Contents : text,
-									},
-								},
-					Sender : "",
-					}
+	message := &message.Message{
+		Text : text,
+	}
 
 	// Trigger handle simple msg
-	go g.HandleSimple(wrapped_pkt)
+	go g.HandleClient(message)
 }
 
 func (g *Gossiper) NodeGetHandler(w http.ResponseWriter, r *http.Request) {
@@ -1328,8 +1464,6 @@ func (g *Gossiper) RoutableGetHandler(w http.ResponseWriter, r *http.Request) {
 func (g *Gossiper) GetRoutable() ([]string) {
      
 	routable := make([]string, 0)
-	fmt.Println("TRYING TO GET ROUTABLE")
-	fmt.Println(g.Dsdv.Map)
 	for k, _ := range g.Dsdv.Map {
 
 		routable = append(routable, k)

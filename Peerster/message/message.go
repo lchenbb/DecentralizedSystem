@@ -12,6 +12,8 @@ type Message struct {
 	Destination *string
 	File *string
 	Request *[]byte
+	Keywords []string
+	Budget uint64
 }
 
 type SimpleMessage struct {
@@ -65,6 +67,33 @@ type DataReply struct {
 	Data []byte
 }
 
+type SearchRequest struct {
+
+	Origin string
+	Budget uint64
+	Keywords []string
+}
+
+type SearchRequestRelayer struct {
+
+	SearchRequest *SearchRequest
+	Relayer string
+}
+type SearchReply struct {
+
+	Origin string
+	Destination string
+	HopLimit uint32
+	Results []*SearchResult
+}
+
+type SearchResult struct {
+
+	FileName string
+	MetafileHash []byte
+	ChunkMap []uint64
+	ChunkCount uint64
+}
 type GossipPacket struct {
 
 	Simple *SimpleMessage
@@ -73,6 +102,8 @@ type GossipPacket struct {
 	Private *PrivateMessage
 	DataRequest *DataRequest
 	DataReply *DataReply
+	SearchRequest *SearchRequest
+	SearchReply *SearchReply
 }
 
 type Gossiper struct {
