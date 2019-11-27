@@ -426,16 +426,12 @@ func (sharer *FileSharer) HandleRequest(wrapped_pkt *message.PacketIncome) {
 	}
 }
 
-func (sharer *FileSharer) CreateIndexFile(fileNamePtr *string) (err error) {
+func (sharer *FileSharer) CreateIndexFile(fileNamePtr *string) (tx *message.TxPublish, err error) {
 
-	/*
-	if _, ok := sharer.FileLocker[*fileNamePtr]; !ok {
-		sharer.FileLocker[*fileNamePtr] = &sync.Mutex{}
-	} 
-	sharer.FileLocker[*fileNamePtr].Lock()
-	defer sharer.FileLocker[*fileNamePtr].Unlock()
-	*/
 	fileName := *fileNamePtr
+	tx = &message.TxPublish{
+		Name : fileName,
+	}
 	var lock *sync.Mutex
 	sharer.FileLocker.Mux.Lock()
 	if _, ok := sharer.FileLocker.Map[fileName]; !ok {
@@ -458,7 +454,7 @@ func (sharer *FileSharer) CreateIndexFile(fileNamePtr *string) (err error) {
 
 	// Read chunks
 	metafile := make([]byte, 0)
-	totalSize := 0
+	totalSize := int64(0)
 
 	for {
 		buffer := make([]byte, bufferSize)
@@ -467,11 +463,11 @@ func (sharer *FileSharer) CreateIndexFile(fileNamePtr *string) (err error) {
 		if err != nil {
 			if err != io.EOF {
 				fmt.Println(err)
-				return err
+				return tx, err
 			}
 			break
 		}
-		totalSize += bytesread
+		totalSize += int64(bytesread)
 
 		// Compute and store hash of current chunk
 		hashArray := sha256.Sum256(buffer[: bytesread])
@@ -515,6 +511,9 @@ func (sharer *FileSharer) CreateIndexFile(fileNamePtr *string) (err error) {
 	fmt.Printf("CREATE METAFILE WITH %d CHUNKS \n", len(metafile) / 32)
 	fmt.Printf("CREATE INDEX FILE FOR FILE %s WITH METAHASH %s\n", fileName, hex.EncodeToString(metahash))
 
+	// Create transaction to return
+	tx.Size = totalSize
+	tx.MetafileHash = metahash
     //fmt.Printf("SERVER CREATE METAFILE SUMS TO %s\n", hex.EncodeToString(metahash))
 	return															  
 }

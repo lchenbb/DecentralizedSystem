@@ -48,7 +48,7 @@ func (n *NetworkHandler) Send(pkt *message.GossipPacket, dst string) {
 }
 
 
-func (n *NetworkHandler) Start_sending() {
+func (n *NetworkHandler) StartSending() {
 	
 	// Get pkt to send from send_ch and 
 	// create go routine to send it
@@ -81,7 +81,7 @@ func (n *NetworkHandler) Start_sending() {
 }
 
 
-func (n *NetworkHandler) Start_listening() {
+func (n *NetworkHandler) StartListening() {
 
 	// Create buffer and pkt container
 
@@ -123,7 +123,7 @@ func (n *NetworkHandler) Start_listening() {
 }
 
 
-func (n *NetworkHandler) Start_listening_client() {
+func (n *NetworkHandler) StartListeningClient() {
 	// Create buffer and pkt container
 
 	// Listen
@@ -156,9 +156,9 @@ func (n *NetworkHandler) Start_listening_client() {
 	// fmt.Println("Finish listening")
 
 }
-func (n *NetworkHandler) Start_working() {
+func (n *NetworkHandler) StartWorking() {
 
-	go n.Start_listening()
-	go n.Start_listening_client()
-	go n.Start_sending()
+	go n.StartListening()
+	go n.StartListeningClient()
+	go n.StartSending()
 }

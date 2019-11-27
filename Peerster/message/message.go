@@ -94,6 +94,51 @@ type SearchResult struct {
 	ChunkMap []uint64
 	ChunkCount uint64
 }
+
+type TxPublish struct {
+	Name string
+	Size int64
+	MetafileHash []byte
+}
+
+type BlockPublish struct {
+	PrevHash [32]byte
+	Transaction TxPublish
+}
+
+type TLCMessage struct {
+	Origin string
+	ID uint32
+	Confirmed bool
+	TxBlock BlockPublish
+	VectorClock *StatusPacket
+	Fitness float32
+}
+
+type WrappedRumorTLCMessage struct {
+	RumorMessage *RumorMessage
+	TLCMessage *TLCMessage
+}
+
+func (m *WrappedRumorTLCMessage) GetOrigin() (origin string) {
+	if m.RumorMessage != nil {
+		origin = m.RumorMessage.Origin
+	} else {
+		origin = m.TLCMessage.Origin
+	}
+	return
+}
+
+func (m *WrappedRumorTLCMessage) GetID() (ID uint32) {
+	if m.RumorMessage != nil {
+		ID = m.RumorMessage.ID
+	} else {
+		ID = m.TLCMessage.ID
+	}
+	return
+}
+type TLCAck PrivateMessage
+
 type GossipPacket struct {
 
 	Simple *SimpleMessage
@@ -104,6 +149,8 @@ type GossipPacket struct {
 	DataReply *DataReply
 	SearchRequest *SearchRequest
 	SearchReply *SearchReply
+	TLCMessage *TLCMessage
+	ACK *TLCAck
 }
 
 type Gossiper struct {
