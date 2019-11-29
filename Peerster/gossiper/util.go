@@ -207,18 +207,6 @@ func (g *Gossiper) Update(wrappedMessage *message.WrappedRumorTLCMessage, sender
 				//fmt.Println("Receive rumor originated from " + rumor.Origin + " with ID " +
 				// strconv.Itoa(int(rumor.ID)) + " relayed by " + sender)
 				return
-			} else {
-				// Update rumor buffer if current TLC is the first confirmed one
-				if !isRumor && nextID > inputID {
-					g.RumorBuffer.Mux.Lock()
-					tlc := g.RumorBuffer.Rumors[origin][inputID-1].TLCMessage
-					if tlc.Confirmed == false {
-						tlc.Confirmed = true
-						updated = true
-					}
-					g.RumorBuffer.Mux.Unlock()
-					return
-				}
 			}
 		}
 	}

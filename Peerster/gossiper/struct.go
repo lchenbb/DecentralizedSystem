@@ -5,6 +5,7 @@ import (
 	"github.com/LiangweiCHEN/Peerster/message"
 
 )
+
 type PeerStatus struct {
 
 	Identifier string
@@ -51,4 +52,15 @@ type TLCAckChs struct {
 
 	Chs map[uint32]chan []string
 	Mux sync.Mutex
+}
+
+type TLCClock struct {
+	
+	Clock map[string]int 
+	Mux sync.Mutex
+}
+
+type WrappedTLCMessage struct {
+	TLCMessage *message.TLCMessage
+	Round int
 }

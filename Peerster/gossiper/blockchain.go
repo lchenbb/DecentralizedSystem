@@ -32,7 +32,7 @@ func (g *Gossiper) HandleTLCMessage(wrapped_pkt *message.PacketIncome) {
 
 	if updated {
 		/* Step 2 */
-		if !tlc.Confirmed {
+		if tlc.Confirmed == -1 {
 			outputStr := fmt.Sprintf("UNCONFIRMED GOSSIP origin %s ID %d file name %s size %d metahash %s\n",
 			tlc.Origin,
 			tlc.ID,
@@ -41,7 +41,11 @@ func (g *Gossiper) HandleTLCMessage(wrapped_pkt *message.PacketIncome) {
 			hex.EncodeToString(tlc.TxBlock.Transaction.MetafileHash),
 			)
 			fmt.Printf(outputStr)
-			g.ACK(tlc.ID, tlc.Origin)
+			if (!g.Hw3ex3) { g.ACK(tlc.ID, tlc.Origin) } else {
+				fmt.Println("HW3EX3 CHECKING ACK")
+				wrappedTLC := g.ComputeRound(tlc)
+				g.WrappedTLCCh<- wrappedTLC
+			}
 		} else {
 			outputStr := fmt.Sprintf("CONFIRMED GOSSIP origin %s ID %d file name %s size %d metahash %s\n",
 				tlc.Origin,
@@ -117,7 +121,7 @@ func (g *Gossiper) SendTLC(tx message.TxPublish) {
 	tlc := &message.TLCMessage{
 		Origin : g.Name,
 		ID : ID,
-		Confirmed : false,
+		Confirmed : -1,
 		TxBlock : message.BlockPublish{
 			Transaction : tx,
 		},
@@ -144,6 +148,7 @@ func (g *Gossiper) SendTLC(tx message.TxPublish) {
 	g.StatusBuffer.Mux.Unlock()
 
 	// Directly confirm if less than three peers in the system
+	var witnesses []string
 	if g.NumPeers > 3 {
 
 		/* Step 2 */
@@ -159,17 +164,16 @@ func (g *Gossiper) SendTLC(tx message.TxPublish) {
 		ticker := time.NewTicker(time.Duration(g.StubbornTimeout) * time.Second)
 
 		consensus := false
-		var witnesses []string
 		for {
 			select {
 			case <-ticker.C:
 				// Timeout before receiving enough ack
 				// Trigger mongering again
 				g.MongerRumor(wrappedMessage, "", []string{})
+				fmt.Println(len(witnesses))
 				fmt.Printf("RE-BROADCAST ID %d WITNESSES %s\n", ID, strings.Join(witnesses, ","))
 			case witnesses = <-terminateCh:
-				// Receive ack from majority
-				// Stop periodically sending 
+				// Receive ack from some peer
 
 				if (len(witnesses) >= int(math.Ceil(float64(g.NumPeers) / 2))) {
 					ticker.Stop()
@@ -185,9 +189,45 @@ func (g *Gossiper) SendTLC(tx message.TxPublish) {
 
 	/* Step 4 */
 	g.RumorBuffer.Mux.Lock()
-	tlc.Confirmed = true
+	confirmedMsgID := uint32(len(g.RumorBuffer.Rumors[g.Name]) + 1)
+
+	tlc = &message.TLCMessage{
+		Origin : g.Name,
+		ID : confirmedMsgID,
+		Confirmed : int(ID),
+		TxBlock : message.BlockPublish{
+			Transaction : tx,
+		},
+		VectorClock : nil,
+		Fitness : 0,
+	}
+	wrappedMessage = &message.WrappedRumorTLCMessage{
+		TLCMessage : tlc,
+	}
+
+	// Store new tlc message into rumor buffer
+	g.RumorBuffer.Rumors[g.Name] = append(g.RumorBuffer.Rumors[g.Name], &message.WrappedRumorTLCMessage{
+		TLCMessage : tlc,
+	})
 	g.RumorBuffer.Mux.Unlock()
+
+	// Update status
+	g.StatusBuffer.Mux.Lock()
+	if _, ok := g.StatusBuffer.Status[g.Name]; !ok {
+		g.StatusBuffer.Status[g.Name] = 2
+	} else {
+		g.StatusBuffer.Status[g.Name] += 1
+	}
+	g.StatusBuffer.Mux.Unlock()
 	fmt.Printf("RECEIVE MAJORITY ACK FOR %d th PROPOSAL\n", ID)
+
+	// Increment round if in hw3ex3
+	if g.Hw3ex3 {
+		g.TLCRoundCh<- struct{}{}
+		g.Round += 1
+		if len(witnesses) == 0 {witnesses = []string{g.Name}}
+		fmt.Printf("ADVANCING TO round %d BASED ON CONFIRMED MESSAGES FROM %s\n", g.Round, strings.Join(witnesses, ","))
+	}
 	g.MongerRumor(wrappedMessage, "", []string{})
 }
 
@@ -224,24 +264,86 @@ func (g *Gossiper) HandleTLCAck() {
 
 		if _, ok := ackMap[ID][peer]; !ok {
 			ackMap[ID][peer] = true
+		} else {
+			continue
 		}
 
 		/* Step 3 */
+		g.TLCAckChs.Mux.Lock()
+		terminateCh := g.TLCAckChs.Chs[ID]
+		g.TLCAckChs.Mux.Unlock()
+
+		// Put the witness to the channel
+		witnesses := make([]string, 0)
+		for k, _ := range ackMap[ID] {
+			witnesses = append(witnesses, k)
+		}
+		terminateCh<- witnesses
+
 		if len(ackMap[ID]) >= int(math.Ceil(float64(g.NumPeers) / 2)) {
-			
 			g.TLCAckChs.Mux.Lock()
-			terminateCh := g.TLCAckChs.Chs[ID]
 			delete(g.TLCAckChs.Chs, ID)
 			g.TLCAckChs.Mux.Unlock()
-
-			// Put the witness to the channel
-			witnesses := make([]string, 0)
-			for k, _ := range ackMap[ID] {
-				witnesses = append(witnesses, k)
-			}
-			terminateCh<- witnesses
 			close(terminateCh)
 			finishMap[ID] = true
+		} 
+	}
+}
+
+func (g *Gossiper) RoundTLCAck() {
+	// This function ack proposals in current round. Used only when hw3ex3 flag set
+	// Step 1. Initialize local cache of proposals
+	// Step 2. When enter a new round, ack all the proposals of current round
+
+	/* Step 1 */
+	tlcCache := make(map[int][]*message.TLCMessage)
+	round := 0
+
+	/* Step 2 */
+	for {
+		select {
+		case <-g.TLCRoundCh:
+			round += 1
+			// Ack the proposals of current round stored in cache
+			if cache, ok := tlcCache[round]; ok {
+				for _, tlc := range cache {
+					g.ACK(tlc.ID, tlc.Origin)
+				}
+			}
+		case wrappedTLC := <-g.WrappedTLCCh:
+			// Ack tlc if it is current round msg, else store it in cache
+			fmt.Printf("RECEIVE TLC OF ROUND %d\n", wrappedTLC.Round)
+			if wrappedTLC.Round == round {
+				g.ACK(wrappedTLC.TLCMessage.ID, wrappedTLC.TLCMessage.Origin)
+			} else if wrappedTLC.Round > round {
+				if _, ok := tlcCache[wrappedTLC.Round]; !ok {
+					tlcCache[wrappedTLC.Round] = make([]*message.TLCMessage, 0)
+				}
+				tlcCache[wrappedTLC.Round] = append(tlcCache[wrappedTLC.Round], wrappedTLC.TLCMessage)
+			}
 		}
 	}
+}
+
+
+func (g *Gossiper) ComputeRound(tlc *message.TLCMessage) (wrappedTLC *WrappedTLCMessage) {
+	// Return the wrappedTLCMessage containing the round of input tlc
+
+	// Get round of input tlc and increment it
+	origin := tlc.Origin
+	g.TLCClock.Mux.Lock()
+	if _, ok := g.TLCClock.Clock[origin]; !ok {
+		g.TLCClock.Clock[origin] = 0
+	}
+	round := g.TLCClock.Clock[origin]
+	g.TLCClock.Clock[origin] += 1
+	g.TLCClock.Mux.Unlock()
+
+	// Construct wrappedTLCMessage
+	wrappedTLC = &WrappedTLCMessage{
+		TLCMessage : tlc,
+		Round : round,
+	}
+
+	return
 }

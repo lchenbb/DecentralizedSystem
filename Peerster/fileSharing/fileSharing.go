@@ -492,7 +492,6 @@ func (sharer *FileSharer) CreateIndexFile(fileNamePtr *string) (tx *message.TxPu
 	sharer.MetaFileMap.Mux.Unlock()
 
 	// Build indexFile obj
-
 	defer lock.Unlock()
 
 	sharer.IndexFileMap.Mux.Lock()
@@ -621,7 +620,6 @@ func (sharer *FileSharer) HandleSearchedFileDownload() {
 		ch := wrappedRequest.ReplyCh
 
 		// Trigger request
-		fmt.Println("Requesting")
 		go sharer.Request(hashPtr, dest, ch, notification)
 
 		// The reply will be directly sent to Searcher and handled by it

@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"fmt"
 	"time"
+	"sort"
 	"regexp"
 	"strings"
 	"strconv"
@@ -84,7 +85,7 @@ func (s *Searcher) Search(query []string, initBudget int) {
 		// Trigger initial search
 		request := &message.SearchRequest{
 			
-			Budget : uint64(currentBudget),
+			Budget : uint64(currentBudget) - 1,
 			Keywords : query,
 		}
 		s.SendCh<- request
@@ -99,7 +100,7 @@ func (s *Searcher) Search(query []string, initBudget int) {
 					request.Budget *= 2
 					s.SendCh<- request
 				} else {
-					fmt.Printf("Fail to obtain enough matching files for query  %s", query)
+					fmt.Printf("Fail to obtain enough matching files for query  %s\n", query)
 				}
 			case <-finishCh:
 				fmt.Printf("SUCCESSFULLY FIND AT LEAST TWO FILE FOR %s\n", strings.Join(query, ","))
@@ -138,14 +139,19 @@ func (s *Searcher) CheckSearchFinish(ch chan struct{}){
 					continue
 				}
 
-				indicatingString := fmt.Sprintf("FOUND MATCH %s AT %s METAFILE %s CHUNKS ", 
-										result.FileName,
+				indicatingString := fmt.Sprintf("FOUND match %s at %s metafile=%s chunks=", 
+										result.FileName[13: ],
 										reply.Origin,
 										hex.EncodeToString(result.MetafileHash))
 
+				intChunkMap := make([]int, len(result.ChunkMap))
 				strChunkMap := make([]string, len(result.ChunkMap))
+				for i := range intChunkMap {
+					intChunkMap[i] = int(result.ChunkMap[i])
+				}
+				sort.Ints(intChunkMap)
 				for i := range strChunkMap {
-					strChunkMap[i] = strconv.Itoa(int(result.ChunkMap[i]))
+					strChunkMap[i] = strconv.Itoa(intChunkMap[i])
 				}
 				indicatingString += strings.Join(strChunkMap, ",")
 				fmt.Println(indicatingString)
@@ -215,6 +221,7 @@ func (s *Searcher) CheckSearchFinish(ch chan struct{}){
 			if foundCount >= s.Threshold {
 				close(ch)
 				s.ReplyCh = nil
+				fmt.Println("SEARCH FINISHED")
 				return
 			}
 		}
@@ -342,7 +349,7 @@ func (s *Searcher) RequestSearchedFile(fileName string, metahash []byte) {
 	wrappedDownloadRequest := &WrappedDownloadRequest{
 		Hash : metahash,
 		Destination : metahashDest,
-		Notification : fmt.Sprintf("DOWNLOADING metafile of %s from %s", fileName, metahashDest),
+		Notification : fmt.Sprintf("DOWNLOADING metafile of %s from %s\n", fileName, metahashDest),
 		ReplyCh : replyCh,
 	}
 	s.SearchedFileDownloadCh<- wrappedDownloadRequest
@@ -400,8 +407,8 @@ func (s *Searcher) RequestSearchedFile(fileName string, metahash []byte) {
 
 			Hash : chunkHash,
 			Destination : target,
-			Notification : fmt.Sprintf("DOWNLOADING CHUNK %d with HASH %s of %s from %s\n", i / 32 + 1,
-						 fileName, hex.EncodeToString(chunkHash), target),
+			Notification : fmt.Sprintf("DOWNLOADING %s chunk %d from %s\n",
+						 fileName, i / 32 + 1, target),
 			ReplyCh : replyCh,
 		}
 
@@ -419,7 +426,7 @@ func (s *Searcher) RequestSearchedFile(fileName string, metahash []byte) {
 		chunkData[i / 32] = dataReply.Data
 		chunkDataLock.Unlock()
 
-		fmt.Printf("RECEIVE CHUNK %d WITH HASH %s\n", i / 32 + 1, hex.EncodeToString(dataReply.HashValue))
+		// fmt.Printf("RECEIVE CHUNK %d WITH HASH %s\n", i / 32 + 1, hex.EncodeToString(dataReply.HashValue))
 		// Increment waitgroup
 		wg.Done()
 		//}(replyCh, &wg, i)

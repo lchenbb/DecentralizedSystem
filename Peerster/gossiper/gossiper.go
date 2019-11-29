@@ -34,6 +34,12 @@ type Gossiper struct {
 	SearchDistributeCh chan *message.SearchRequestRelayer
 	TLCAckChs          *TLCAckChs
 	TLCAckCh           chan *message.PacketIncome
+	TLCClock           *TLCClock
+	TLCRoundCh			chan struct{}
+	WrappedTLCCh		chan *WrappedTLCMessage
+	Hw3ex2				bool
+	Hw3ex3				bool
+	Round 				int
 }
 
 // Gossiper start working
@@ -67,6 +73,9 @@ func (gossiper *Gossiper) StartWorking() {
 
 	// Start handling tlc ack
 	go gossiper.HandleTLCAck()
+
+	// Start round tlc ack if hw3ex3
+	if gossiper.Hw3ex3 {go gossiper.RoundTLCAck()}
 }
 
 func (gossiper *Gossiper) StartHandling() {
