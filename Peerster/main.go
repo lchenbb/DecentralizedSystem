@@ -90,6 +90,7 @@ func InitGossiper(UIPort, gossipAddr, name string, simple bool, peers []string, 
 	}
 
 	if !hw3ex2 && !hw3ex3 {
+		fmt.Println("We are not in hw3ex2 or hw3ex3")
 		numPeers = 1
 	}
 	// Create gossiper
@@ -149,9 +150,12 @@ func InitGossiper(UIPort, gossipAddr, name string, simple bool, peers []string, 
 		NumPeers:        numPeers,
 		TLCClock: &gossiper.TLCClock{
 			Clock : make(map[string]int),
+			Map : make(map[string]map[uint32]int),
 		},
 		TLCRoundCh : make(chan struct{}),
 		WrappedTLCCh : make(chan *gossiper.WrappedTLCMessage),
+		ConfirmedMessageCh : make(chan *message.TLCMessage),
+		TransactionSendCh : make(chan *message.TxPublish),
 		Hw3ex2 : hw3ex2,
 		Hw3ex3 : hw3ex3,
 	}

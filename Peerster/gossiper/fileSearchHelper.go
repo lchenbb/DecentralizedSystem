@@ -24,7 +24,7 @@ func (g *Gossiper) TriggerSearch() {
 
 
 func (g *Gossiper) DistributeSearch() {
-	// Distribute the request to neighbours aprt from replayer evenly
+	// Distribute the request to neighbours apart from replayer evenly
 
 	for requestRelayer := range g.SearchDistributeCh {
 
@@ -59,6 +59,7 @@ func (g *Gossiper) DistributeSearch() {
 				var budget_to_send int
 				if high_budget_peer > 0 {
 					budget_to_send = low_budget + 1
+					high_budget_peer -= 1
 				} else {
 					budget_to_send = low_budget
 				}

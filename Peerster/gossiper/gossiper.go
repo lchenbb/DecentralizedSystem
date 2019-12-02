@@ -37,6 +37,8 @@ type Gossiper struct {
 	TLCClock           *TLCClock
 	TLCRoundCh			chan struct{}
 	WrappedTLCCh		chan *WrappedTLCMessage
+	ConfirmedMessageCh	chan *message.TLCMessage
+	TransactionSendCh	chan *message.TxPublish
 	Hw3ex2				bool
 	Hw3ex3				bool
 	Round 				int
@@ -75,7 +77,11 @@ func (gossiper *Gossiper) StartWorking() {
 	go gossiper.HandleTLCAck()
 
 	// Start round tlc ack if hw3ex3
-	if gossiper.Hw3ex3 {go gossiper.RoundTLCAck()}
+	if gossiper.Hw3ex3 {
+		go gossiper.RoundTLCAck()
+		go gossiper.HandleConfirmedMessage()
+		go gossiper.HandleRoundSend()
+	}
 }
 
 func (gossiper *Gossiper) StartHandling() {
@@ -144,6 +150,10 @@ func (gossiper *Gossiper) StartHandling() {
 
 			case pkt.Packet.SearchRequest != nil:
 				// Handle search request in sharer
+				// Do nothing if self is the origin
+				if pkt.Packet.SearchRequest.Origin == gossiper.Name {
+					continue
+				}
 				go gossiper.FileSharer.HandleSearch(pkt.Packet.SearchRequest, pkt.Sender)
 
 			case pkt.Packet.SearchReply != nil:

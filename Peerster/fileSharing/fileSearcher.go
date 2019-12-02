@@ -76,7 +76,7 @@ func (s *Searcher) Search(query []string, initBudget int) {
 	go func() {
 
 		currentBudget := initBudget
-		ticker := time.NewTicker(time.Duration(10) * time.Second)
+		ticker := time.NewTicker(time.Duration(2) * time.Second)
 
 		// Prepare search finish checking 
 		finishCh := make(chan struct{})
@@ -85,11 +85,11 @@ func (s *Searcher) Search(query []string, initBudget int) {
 		// Trigger initial search
 		request := &message.SearchRequest{
 			
-			Budget : uint64(currentBudget) - 1,
+			Budget : uint64(currentBudget),
 			Keywords : query,
 		}
 		s.SendCh<- request
-
+		fmt.Printf("SEARCH WITH BUDGET %d\n", request.Budget)
 		// Trigger incremental search or finish search
 		for {
 			select {
@@ -135,7 +135,8 @@ func (s *Searcher) CheckSearchFinish(ch chan struct{}){
 			for _, result := range reply.Results {
 
 				// Continue if current file has been finished searching
-				if _, finished := finishedMap[result.FileName]; finished {
+				fileIndex := result.FileName + reply.Origin
+				if _, finished := finishedMap[fileIndex]; finished {
 					continue
 				}
 
@@ -156,12 +157,12 @@ func (s *Searcher) CheckSearchFinish(ch chan struct{}){
 				indicatingString += strings.Join(strChunkMap, ",")
 				fmt.Println(indicatingString)
 
-				if fileInfo, ok := fileRecord.Map[result.FileName]; !ok {
+				if fileInfo, ok := fileRecord.Map[fileIndex]; !ok {
 
 					// Add unseen file to record
 					chunkMap := make(map[uint64]bool)
 					s.TargetMetahash.Mux.Lock()
-					s.TargetMetahash.Map[result.FileName] = result.MetafileHash
+					s.TargetMetahash.Map[fileIndex] = result.MetafileHash
 					s.TargetMetahash.Mux.Unlock()
 
 					s.Target.Mux.Lock()
@@ -178,7 +179,7 @@ func (s *Searcher) CheckSearchFinish(ch chan struct{}){
 					}	
 					s.Target.Map[metafilestr] = chunkDestSlice
 					s.Target.Mux.Unlock()
-					fileRecord.Map[result.FileName] = FileInfo{
+					fileRecord.Map[fileIndex] = FileInfo{
 						MetaHash : result.MetafileHash,
 						NumChunks : result.ChunkCount,
 						ChunkMap : chunkMap,
@@ -204,11 +205,11 @@ func (s *Searcher) CheckSearchFinish(ch chan struct{}){
 
 				// Check whether all the chunks of a file have been found
 				count := uint64(0)
-				for _ = range fileRecord.Map[result.FileName].ChunkMap {
+				for _ = range fileRecord.Map[fileIndex].ChunkMap {
 					count += 1
 				}
 				if count == result.ChunkCount {
-					finishedMap[result.FileName] = true
+					finishedMap[fileIndex] = true
 				}
 			}
 
@@ -247,7 +248,7 @@ func (sharer *FileSharer) HandleSearch(request *message.SearchRequest, relayer s
 
 	// Start time ticker to terminate protection against frequent request attack
 	go func(requestKey string) {
-		ticker := time.NewTicker(time.Duration(5000) * time.Millisecond)
+		ticker := time.NewTicker(time.Duration(500) * time.Millisecond)
 		for {
 			select {
 			case <-ticker.C:

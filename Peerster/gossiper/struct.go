@@ -57,6 +57,7 @@ type TLCAckChs struct {
 type TLCClock struct {
 	
 	Clock map[string]int 
+	Map map[string]map[uint32]int
 	Mux sync.Mutex
 }
 
