@@ -26,8 +26,9 @@ var stubbornTimeout int
 var numPeers int
 var hw3ex2 bool
 var hw3ex3 bool
+var ackAll bool
 func input() (UIPort string, GuiPort string, gossipAddr string, name string, peers []string, simple, hw3ex2, hw3ex3 bool, antiEntropy int, rtimer int, sharedFilePath string,
-	stubbornTimeout int, numPeers int) {
+	stubbornTimeout int, numPeers int, ackAll bool) {
 
 	// Set flag value containers
 	flag.StringVar(&UIPort, "UIPort", "8080", "UI port num")
@@ -57,6 +58,8 @@ func input() (UIPort string, GuiPort string, gossipAddr string, name string, pee
 	flag.IntVar(&stubbornTimeout, "stubbornTimeout", 5, "timeout between two continous blockchain proposal")
 
 	flag.IntVar(&numPeers, "N", 1, "number of peers in the system")
+
+	flag.BoolVar(&ackAll, "ackAll", false, "whether to ack all incoming tlc message")
 
 	// Conduct parameter retreival
 	flag.Parse()
@@ -154,10 +157,11 @@ func InitGossiper(UIPort, gossipAddr, name string, simple bool, peers []string, 
 		},
 		TLCRoundCh : make(chan struct{}),
 		WrappedTLCCh : make(chan *gossiper.WrappedTLCMessage),
-		ConfirmedMessageCh : make(chan *message.TLCMessage),
+		ConfirmedMessageCh : make(chan *message.TLCMessage, 1000),
 		TransactionSendCh : make(chan *message.TxPublish),
 		Hw3ex2 : hw3ex2,
 		Hw3ex3 : hw3ex3,
+		AckAll : ackAll,
 	}
 
 	g.FileSharer = &fileSharing.FileSharer{
@@ -219,7 +223,7 @@ func InitGossiper(UIPort, gossipAddr, name string, simple bool, peers []string, 
 func main() {
 
 	// Get input parameters
-	UIPort, GuiPort, gossipAddr, name, peers, simple, hw3ex2, hw3ex3, antiEntropy, rtimer, sharedFilePath, stubbornTimeout, numPeers = input()
+	UIPort, GuiPort, gossipAddr, name, peers, simple, hw3ex2, hw3ex3, antiEntropy, rtimer, sharedFilePath, stubbornTimeout, numPeers, ackAll = input()
 
 	// Set up gossiper
 	g := InitGossiper(UIPort, gossipAddr, name, simple, peers, antiEntropy, rtimer, sharedFilePath)

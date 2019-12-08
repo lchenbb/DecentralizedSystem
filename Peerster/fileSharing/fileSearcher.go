@@ -76,7 +76,7 @@ func (s *Searcher) Search(query []string, initBudget int) {
 	go func() {
 
 		currentBudget := initBudget
-		ticker := time.NewTicker(time.Duration(2) * time.Second)
+		ticker := time.NewTicker(time.Duration(3) * time.Second)
 
 		// Prepare search finish checking 
 		finishCh := make(chan struct{})
@@ -162,10 +162,12 @@ func (s *Searcher) CheckSearchFinish(ch chan struct{}){
 					// Add unseen file to record
 					chunkMap := make(map[uint64]bool)
 					s.TargetMetahash.Mux.Lock()
+					fmt.Println("I CAN OBTAIN TARGET METAHASH MUX")
 					s.TargetMetahash.Map[fileIndex] = result.MetafileHash
 					s.TargetMetahash.Mux.Unlock()
 
 					s.Target.Mux.Lock()
+					fmt.Println("I CAN OBTAIN TARGET MUX")
 					metafilestr := string(result.MetafileHash)
 					chunkDestSlice := make([]ChunkDest, 0)
 					for _, index := range result.ChunkMap {
@@ -219,6 +221,7 @@ func (s *Searcher) CheckSearchFinish(ch chan struct{}){
 			for _ = range finishedMap {
 				foundCount += 1
 			}
+			fmt.Printf("RECEIVE %d GUYS\n", foundCount)
 			if foundCount >= s.Threshold {
 				close(ch)
 				s.ReplyCh = nil
@@ -339,6 +342,7 @@ func (s *Searcher) RequestSearchedFile(fileName string, metahash []byte) {
 	s.Target.Mux.Lock()
 	var metahashDest string
 	if targetPeers, ok := s.Target.Map[metahashstr]; !ok {
+		s.Target.Mux.Unlock()
 		fmt.Println("CANNOT FIND METAHASH")
 		return
 	} else {

@@ -42,6 +42,7 @@ type Gossiper struct {
 	Hw3ex2				bool
 	Hw3ex3				bool
 	Round 				int
+	AckAll				bool
 }
 
 // Gossiper start working
@@ -79,8 +80,10 @@ func (gossiper *Gossiper) StartWorking() {
 	// Start round tlc ack if hw3ex3
 	if gossiper.Hw3ex3 {
 		go gossiper.RoundTLCAck()
-		go gossiper.HandleConfirmedMessage()
-		go gossiper.HandleRoundSend()
+		confirmCh := make(chan struct{})
+		sendCh := make(chan struct{})
+		go gossiper.HandleConfirmedMessage(confirmCh, sendCh)
+		go gossiper.HandleRoundSend(confirmCh, sendCh)
 	}
 }
 
@@ -171,7 +174,9 @@ func (gossiper *Gossiper) StartHandling() {
 				}
 			case pkt.Packet.TLCMessage != nil:
 				// Handle transaction proposal
-				go gossiper.HandleTLCMessage(pkt)
+				if pkt.Packet.TLCMessage.Origin != gossiper.Name {
+					go gossiper.HandleTLCMessage(pkt)
+				}
 
 			case pkt.Packet.ACK != nil:
 				// Handle transaction acknowledgement

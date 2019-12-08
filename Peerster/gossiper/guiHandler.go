@@ -240,7 +240,8 @@ func (g *Gossiper) ShareFileHandler(w http.ResponseWriter, r *http.Request) {
 			fmt.Println(err)
 			return
 		}
-		g.SendTLC(*tx)
+		round := g.Round
+		g.SendTLC(*tx, round)
 	}(&fileName.Name)
 
 	g.AckPost(true, w)

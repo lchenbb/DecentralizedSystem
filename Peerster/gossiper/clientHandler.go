@@ -95,7 +95,8 @@ func (g *Gossiper) HandleClient(msg *message.Message) {
 		if g.Hw3ex2 {
 			go func(fileName *string) {
 				tx, _ := g.FileSharer.CreateIndexFile(fileName)
-				g.SendTLC(*tx)
+				round := g.Round
+				g.SendTLC(*tx, round)
 			}(msg.File)
 		} else {
 			go func(fileName *string) {
