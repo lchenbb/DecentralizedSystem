@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"time"
+	"strings"
 	"net/http"
 	"encoding/hex"
 	"encoding/json"
@@ -33,11 +34,17 @@ func (g *Gossiper) HandleGUI() {
 			Methods("GET", "OPTIONS")
 		r.HandleFunc("/routing", g.RoutableGetHandler).
 			Methods("GET", "OPTIONS")
+		r.HandleFunc("/search", g.SearchedGetHandler).
+			Methods("GET", "OPTIONS")
 		r.HandleFunc("/routing", g.PrivateMsgSendHandler).
 			Methods("POST", "OPTIONS")
 		r.HandleFunc("/sharing", g.ShareFileHandler).
 			Methods("POST", "OPTIONS")
 		r.HandleFunc("/request", g.RequestFileHandler).
+			Methods("POST", "OPTIONS")
+		r.HandleFunc("/search", g.SearchHandler).
+			Methods("POST", "OPTIONS")
+		r.HandleFunc("/download", g.DownloadHandler).
 			Methods("POST", "OPTIONS")
 		fmt.Printf("Starting webapp on address http://127.0.0.1:%s\n", g.GuiPort)
 
@@ -62,7 +69,7 @@ func (g *Gossiper) MessageGetHandler(w http.ResponseWriter, r *http.Request) {
 	enableCors(&w)
 
 	var messages struct {
-		Messages []message.RumorMessage `json:"messages"`
+		Messages []string `json:"messages"`
 	}
 
 	messages.Messages = g.GetMessages()
@@ -70,20 +77,10 @@ func (g *Gossiper) MessageGetHandler(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(messages)
 }
 
-func (g *Gossiper) GetMessages() ([]message.RumorMessage){
+func (g *Gossiper) GetMessages() ([]string){
 	// Return all rumors
 
-	buffer := make([]message.RumorMessage, 0)
-
-	for _, list := range g.RumorBuffer.Rumors {
-
-		for _, rumor := range list {
-
-			if rumor.RumorMessage != nil && rumor.RumorMessage.Text != "" {
-				buffer = append(buffer, *rumor.RumorMessage)
-			}
-		}
-	}
+	buffer := g.MsgBuffer.Msg
 
 	return buffer
 }
@@ -199,6 +196,29 @@ func (g *Gossiper) GetRoutable() ([]string) {
 	return routable
 }
 
+func (g *Gossiper) SearchedGetHandler(w http.ResponseWriter, r *http.Request) {
+	enableCors(&w)
+
+	var matched struct {
+		Matches []string `json:"matches"`
+	}
+
+	matched.Matches = g.GetSearchedFileName()
+
+	json.NewEncoder(w).Encode(matched)
+}
+
+func (g *Gossiper) GetSearchedFileName() []string {
+
+	matched := make([]string, 0)
+	g.FileSharer.Searcher.TargetMetahash.Mux.Lock()
+	for k, _ := range g.FileSharer.Searcher.TargetMetahash.Map {
+		matched = append(matched, k)
+	}
+	g.FileSharer.Searcher.TargetMetahash.Mux.Unlock()
+
+	return matched
+}
 func (g *Gossiper) PrivateMsgSendHandler(w http.ResponseWriter, r *http.Request) {
 
 	enableCors(&w)
@@ -235,13 +255,15 @@ func (g *Gossiper) ShareFileHandler(w http.ResponseWriter, r *http.Request) {
 	// Trigger fileSharer to index that file
 	// TODO: May need to change this func to be concurrent
 	go func(fileName *string) {
-		tx, err := g.FileSharer.CreateIndexFile(fileName)
-		if err != nil {
-			fmt.Println(err)
-			return
+		if !g.Hw3ex3 {
+			tx, _ := g.FileSharer.CreateIndexFile(fileName)
+			round := g.Round
+			g.SendTLC(*tx, round)
+		
+		} else {
+			tx, _ := g.FileSharer.CreateIndexFile(fileName)
+			g.TransactionSendCh<- tx
 		}
-		round := g.Round
-		g.SendTLC(*tx, round)
 	}(&fileName.Name)
 
 	g.AckPost(true, w)
@@ -278,6 +300,45 @@ func (g *Gossiper) RequestFileHandler(w http.ResponseWriter, r *http.Request) {
 		os.Exit(1)
 	}
 	g.FileSharer.RequestFile(&msg.FileName, &metaHash, &msg.Dest)
+
+	g.AckPost(true, w)
+}
+
+func (g *Gossiper) SearchHandler(w http.ResponseWriter, r *http.Request) {
+
+	enableCors(&w)
+
+	var msg struct {
+		Keywords string
+	}
+
+	json.NewDecoder(r.Body).Decode(&msg)
+
+	// Trigger keyword search
+	keywords := strings.Split(msg.Keywords, ",")
+	g.FileSharer.Searcher.Search(keywords, 2)
+
+	g.AckPost(true, w)
+}
+
+func (g *Gossiper) DownloadHandler(w http.ResponseWriter, r *http.Request) {
+
+	enableCors(&w)
+
+	var fileName struct {
+		Name string
+	}
+
+	json.NewDecoder(r.Body).Decode(&fileName)
+
+	// Get the metahash of the file
+	g.FileSharer.Searcher.TargetMetahash.Mux.Lock()
+	metahash := g.FileSharer.Searcher.TargetMetahash.Map["_SharedFiles/" + fileName.Name]
+	fmt.Println(fileName)
+	g.FileSharer.Searcher.TargetMetahash.Mux.Unlock()
+	fmt.Printf("Requesting %s\n", hex.EncodeToString(metahash))
+	// Trigger download of the file
+	go g.FileSharer.Searcher.RequestSearchedFile(fileName.Name, metahash)
 
 	g.AckPost(true, w)
 }

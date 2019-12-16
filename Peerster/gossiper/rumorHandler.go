@@ -44,8 +44,15 @@ func (g *Gossiper) HandleRumor(wrapped_pkt *message.PacketIncome) {
 		}
 
 		// Output rumor content only if it is not heartbeat rumor
-		fmt.Printf("RUMOR origin %s from %s ID %s contents %s\n", rumor.Origin, sender, strconv.Itoa(int(rumor.ID)), rumor.Text)
 
+		output := fmt.Sprintf("RUMOR origin %s from %s ID %s contents %s\n", rumor.Origin, sender, strconv.Itoa(int(rumor.ID)), rumor.Text)
+		
+		fmt.Print(output)
+		if rumor.Text != "" {
+			g.MsgBuffer.Mux.Lock()
+			g.MsgBuffer.Msg = append(g.MsgBuffer.Msg, output)
+			g.MsgBuffer.Mux.Unlock()
+		}
 		/* Step 4 */
 		wrappedMessage := &message.WrappedRumorTLCMessage{
 			RumorMessage: rumor,

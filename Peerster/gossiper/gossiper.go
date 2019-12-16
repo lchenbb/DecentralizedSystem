@@ -43,6 +43,7 @@ type Gossiper struct {
 	Hw3ex3				bool
 	Round 				int
 	AckAll				bool
+	MsgBuffer			MsgBuffer
 }
 
 // Gossiper start working

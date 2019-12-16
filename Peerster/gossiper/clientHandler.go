@@ -92,7 +92,7 @@ func (g *Gossiper) HandleClient(msg *message.Message) {
 		// Handle File indexing
 		// 1. Trigger fileSharing obj indexing
 		// 2. Trigger broadcasting the proposed name to the peers
-		if g.Hw3ex2 {
+		if !g.Hw3ex3 {
 			go func(fileName *string) {
 				tx, _ := g.FileSharer.CreateIndexFile(fileName)
 				round := g.Round

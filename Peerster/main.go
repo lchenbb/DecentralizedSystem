@@ -162,6 +162,9 @@ func InitGossiper(UIPort, gossipAddr, name string, simple bool, peers []string, 
 		Hw3ex2 : hw3ex2,
 		Hw3ex3 : hw3ex3,
 		AckAll : ackAll,
+		MsgBuffer : gossiper.MsgBuffer{
+			Msg : make([]string, 0),
+		},
 	}
 
 	g.FileSharer = &fileSharing.FileSharer{

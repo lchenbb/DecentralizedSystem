@@ -65,3 +65,8 @@ type WrappedTLCMessage struct {
 	TLCMessage *message.TLCMessage
 	Round int
 }
+
+type MsgBuffer struct {
+	Msg []string
+	Mux sync.Mutex
+}

@@ -54,7 +54,11 @@ func (g *Gossiper) HandleTLCMessage(wrapped_pkt *message.PacketIncome) {
 				hex.EncodeToString(tlc.TxBlock.Transaction.MetafileHash),
 				)
 				fmt.Printf(outputStr)
-			
+				if g.Hw3ex2 || g.Hw3ex3 {
+					g.MsgBuffer.Mux.Lock()
+					g.MsgBuffer.Msg = append(g.MsgBuffer.Msg, outputStr)
+					g.MsgBuffer.Mux.Unlock()
+				}
 			if g.Hw3ex3 {
 				g.ConfirmedMessageCh<- tlc
 			}
@@ -197,7 +201,6 @@ func (g *Gossiper) SendTLC(tx message.TxPublish, round int) {
 				fmt.Printf("RE-BROADCAST ID %d WITNESSES %s\n", ID, strings.Join(witnesses, ","))
 			case witnesses = <-terminateCh:
 				// Receive ack from some peer
-
 				if (len(witnesses) >= int(math.Ceil(float64(g.NumPeers) / 2))) {
 					ticker.Stop()
 					consensus = true
@@ -258,8 +261,22 @@ func (g *Gossiper) SendTLC(tx message.TxPublish, round int) {
 		g.StatusBuffer.Status[g.Name] += 1
 	}
 	g.StatusBuffer.Mux.Unlock()
-	fmt.Printf("RECEIVE MAJORITY ACK FOR %d th PROPOSAL\n", ID)
 
+	// Print confirmation from itself
+	fmt.Printf("RECEIVE MAJORITY ACK FOR %d th PROPOSAL\n", ID)
+	selfOutStr := fmt.Sprintf("CONFIRMED GOSSIP origin %s ID %d file name %s size %d metahash %s\n",
+		tlc.Origin,
+		tlc.ID,
+		tlc.TxBlock.Transaction.Name,
+		tlc.TxBlock.Transaction.Size,
+		hex.EncodeToString(tlc.TxBlock.Transaction.MetafileHash),
+	)
+	fmt.Printf(selfOutStr)
+	if g.Hw3ex2 || g.Hw3ex3 {
+		g.MsgBuffer.Mux.Lock()
+		g.MsgBuffer.Msg = append(g.MsgBuffer.Msg, selfOutStr)
+		g.MsgBuffer.Mux.Unlock()
+	}
 	g.MongerRumor(wrappedMessage, "", []string{})
 }
 
@@ -434,8 +451,12 @@ func (g *Gossiper) HandleConfirmedMessage(confirmCh chan struct{}, sendCh chan s
 					witnessOutputSlice[index] = fmt.Sprintf("origin%d %s ID%d %d", index + 1, k, index + 1, v)
 					index += 1
 				}
-				outputStr := fmt.Sprintf("ADVANCING TO round %d BASED ON CONFIRMED MESSAGES %s\n",
+				outputStr := fmt.Sprintf("ADVANCING TO round %d BASED ON CONFIRMED MESSAGES %s",
 											g.Round, strings.Join(witnessOutputSlice, ","))
+				outputStr += "\n"
+				g.MsgBuffer.Mux.Lock()
+				g.MsgBuffer.Msg = append(g.MsgBuffer.Msg, outputStr)
+				g.MsgBuffer.Mux.Unlock()
 				fmt.Printf(outputStr)
 			}
 		}

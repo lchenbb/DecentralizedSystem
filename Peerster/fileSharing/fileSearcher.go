@@ -135,7 +135,7 @@ func (s *Searcher) CheckSearchFinish(ch chan struct{}){
 			for _, result := range reply.Results {
 
 				// Continue if current file has been finished searching
-				fileIndex := result.FileName + reply.Origin
+				fileIndex := result.FileName //+ reply.Origin
 				if _, finished := finishedMap[fileIndex]; finished {
 					continue
 				}
