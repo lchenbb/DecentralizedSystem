@@ -13,7 +13,7 @@ import (
 
 
 /* Struct definition */
-func input() (UIPort string, msg string, dest string, file, request, keywords string, budget int) {
+func input() (UIPort string, msg string, dest string, file, request, keywords string, budget int, voterid, vote string) {
 
 	// Set cmd flag value containers
 	flag.StringVar(&UIPort, "UIPort", "8080", "UI port number")
@@ -29,6 +29,10 @@ func input() (UIPort string, msg string, dest string, file, request, keywords st
 	flag.StringVar(&keywords, "keywords", "", "Keywords of file title to search")
 
 	flag.IntVar(&budget, "budget", 2, "Initial budget of expanding ring search")
+
+	// Parameter for votes
+	flag.StringVar(&voterid, "Voterid", "", "Voter id in string")
+	flag.StringVar(&vote, "Vote", "", "Vote in string")
 	// Parse cmd values
 	flag.Parse()
 
@@ -37,7 +41,7 @@ func input() (UIPort string, msg string, dest string, file, request, keywords st
 
 func main() {
 
-	UIPort, msg, dest, file, request, keywords, budget := input()
+	UIPort, msg, dest, file, request, keywords, budget, voterid, vote := input()
 
 	// Handle invalid user input
 	switch {
@@ -47,6 +51,7 @@ func main() {
 	case msg != "" && dest == "" && file == "" && request == "" && keywords == "": // Gossip msg
 	case msg == "" && dest == "" && file == "" && request == "" && keywords != "" && budget > 0: // Search file instruction
 	case msg == "" && dest == "" && file != "" && request != "" && keywords == "": // Download searched file instruction?
+	case voterid != "" && vote != "":												// Blockchain
 	default:
 		fmt.Printf("ERROR (Bad argument combination)")
 		os.Exit(1)
@@ -99,6 +104,7 @@ func main() {
 		keyword_slice = make([]string, 0)
 	}
 	fmt.Printf("Keywords are %s\n", strings.Join(keyword_slice, ","))
+	fmt.Printf("Voterid %s Vote %s\n", voterid, vote)
 	pkt := &message.Message{
 		Text : msg,
 		Destination : destPtr,
@@ -106,6 +112,8 @@ func main() {
 		Request : requestPtr,
 		Keywords : keyword_slice,
 		Budget : uint64(budget),
+		Voterid : voterid,
+		Vote : vote,
 	}
 
 	// Encode the msg
@@ -117,7 +125,7 @@ func main() {
 	}
 
 	// Send the msg to the server
-	// fmt.Println("Sending to gossiper")
+	fmt.Println("Sending to gossiper")
 	conn.Write(msg_bytes)
 
 	return

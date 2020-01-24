@@ -85,9 +85,13 @@ func (g *Gossiper) MongerRumor(wrappedMessage *message.WrappedRumorTLCMessage, t
 		toSendPkt = &message.GossipPacket{
 			Rumor: wrappedMessage.RumorMessage,
 		}
-	} else {
+	} else if wrappedMessage.TLCMessage != nil {
 		toSendPkt = &message.GossipPacket{
 			TLCMessage: wrappedMessage.TLCMessage,
+		}
+	} else {
+		toSendPkt = &message.GossipPacket{
+			BlockRumorMessage: wrappedMessage.BlockRumorMessage,
 		}
 	}
 	g.N.Send(toSendPkt, peerAddr)

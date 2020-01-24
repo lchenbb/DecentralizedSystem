@@ -44,6 +44,14 @@ type Gossiper struct {
 	Round 				int
 	AckAll				bool
 	MsgBuffer			MsgBuffer
+	// Stuff for Que sera consensus
+	Rand 				func() int64 // Function to generate random ticket for QSC
+	QSCMessage			QSCMessage // QSC Message holder
+	Acks				int // Number of acks for QSC proposal
+	Wits				int // Number of threshold witnessed messages
+
+	// Stuff for blockchain
+	Blockchain			*Blockchain
 }
 
 // Gossiper start working
@@ -77,6 +85,9 @@ func (gossiper *Gossiper) StartWorking() {
 
 	// Start handling tlc ack
 	go gossiper.HandleTLCAck()
+
+	// Start handling sending candidate blocks
+	go gossiper.HandleSendingBlocks()
 
 	// Start round tlc ack if hw3ex3
 	if gossiper.Hw3ex3 {
@@ -190,6 +201,11 @@ func (gossiper *Gossiper) StartHandling() {
 				} else {
 					gossiper.TLCAckCh <- pkt
 				}
+
+			case pkt.Packet.BlockRumorMessage != nil:
+				// Handle blockRumorMessage
+				// Pass the block to blockchain handler
+				go gossiper.HandleReceivingBlock(pkt)
 			}
 
 		}

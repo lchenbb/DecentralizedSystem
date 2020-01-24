@@ -46,6 +46,8 @@ func (g *Gossiper) HandleGUI() {
 			Methods("POST", "OPTIONS")
 		r.HandleFunc("/download", g.DownloadHandler).
 			Methods("POST", "OPTIONS")
+		r.HandleFunc("/vote", g.VoteHandler).
+			Methods("POST", "OPTIONS")
 		fmt.Printf("Starting webapp on address http://127.0.0.1:%s\n", g.GuiPort)
 
 		srv := &http.Server{
@@ -341,4 +343,17 @@ func (g *Gossiper) DownloadHandler(w http.ResponseWriter, r *http.Request) {
 	go g.FileSharer.Searcher.RequestSearchedFile(fileName.Name, metahash)
 
 	g.AckPost(true, w)
+}
+
+func (g *Gossiper) VoteHandler(w http.ResponseWriter, r *http.Request) {
+
+	enableCors(&w)
+
+	var castBallot message.CastBallot
+
+	json.NewDecoder(r.Body).Decode(&castBallot)
+
+	fmt.Printf("GET VOTE FROM %s VOTING FOR %s", castBallot.VoterUuid, castBallot.VoteHash)
+
+	go g.HandleReceivingVote(&castBallot)
 }

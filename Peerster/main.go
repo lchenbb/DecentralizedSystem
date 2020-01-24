@@ -92,10 +92,12 @@ func InitGossiper(UIPort, gossipAddr, name string, simple bool, peers []string, 
 		GuiPort = strconv.Itoa(GuiPortInt)
 	}
 
+	/*
 	if !hw3ex2 && !hw3ex3 {
 		fmt.Println("We are not in hw3ex2 or hw3ex3")
 		numPeers = 1
 	}
+	*/
 	// Create gossiper
 	g = &gossiper.Gossiper{
 		Address: gossipAddr,
@@ -220,6 +222,7 @@ func InitGossiper(UIPort, gossipAddr, name string, simple bool, peers []string, 
 			SearchedFileDownloadCh: make(chan *fileSharing.WrappedDownloadRequest),
 		},
 	}
+	g.Blockchain = g.NewBlockchain()
 	return
 }
 

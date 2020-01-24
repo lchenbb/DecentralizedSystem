@@ -172,7 +172,6 @@ func (g *Gossiper) Update(wrappedMessage *message.WrappedRumorTLCMessage, sender
 
 	g.StatusBuffer.Mux.Lock()
 	defer g.StatusBuffer.Mux.Unlock()
-
 	known_peer := false
 	isRumor := wrappedMessage.RumorMessage != nil
 	var inputID uint32
@@ -180,9 +179,12 @@ func (g *Gossiper) Update(wrappedMessage *message.WrappedRumorTLCMessage, sender
 	if isRumor {
 		inputID = wrappedMessage.RumorMessage.ID
 		inputOrigin = wrappedMessage.RumorMessage.Origin
-	} else {
+	} else if wrappedMessage.TLCMessage != nil {
 		inputID = wrappedMessage.TLCMessage.ID
 		inputOrigin = wrappedMessage.TLCMessage.Origin
+	} else {
+		inputID = wrappedMessage.BlockRumorMessage.ID
+		inputOrigin = wrappedMessage.BlockRumorMessage.Origin
 	}
 
 	for origin, nextID := range g.StatusBuffer.Status {
@@ -206,11 +208,11 @@ func (g *Gossiper) Update(wrappedMessage *message.WrappedRumorTLCMessage, sender
 
 				//fmt.Println("Receive rumor originated from " + rumor.Origin + " with ID " +
 				// strconv.Itoa(int(rumor.ID)) + " relayed by " + sender)
+
 				return
 			}
 		}
 	}
-
 	// Handle rumor originated from a new peer
 	if inputID == 1 && !known_peer {
 
@@ -226,7 +228,6 @@ func (g *Gossiper) Update(wrappedMessage *message.WrappedRumorTLCMessage, sender
 		//   " relayed by " + sender)
 		return
 	}
-
 	// Fail to update, either out of date or too advanced
 	updated = false
 	return

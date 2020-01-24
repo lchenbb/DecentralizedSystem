@@ -120,5 +120,11 @@ func (g *Gossiper) HandleClient(msg *message.Message) {
 		// Handle file search
 		fmt.Printf("CLIENT WANT TO SEARCH FOR %s\n", strings.Join(msg.Keywords, ","))
 		g.FileSharer.Searcher.Search(msg.Keywords, int(msg.Budget))
+
+	case msg.Voterid != "" && msg.Vote != "":
+		// Handle vote
+		fmt.Printf("CLIENT SEND VOTE FROM %s WITH CONTENT %s\n", msg.Voterid, msg.Vote)
+		v := g.Blockchain.CreateBallot(msg.Voterid, msg.Vote)
+		go g.HandleReceivingVote(v)
 	}
 }
