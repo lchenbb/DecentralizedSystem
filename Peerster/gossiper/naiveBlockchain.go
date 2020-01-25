@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"sync"
 	"time"
+	"bytes"
 	"fmt"
 
 )
@@ -16,7 +17,7 @@ type Blockchain struct {
 
 	// Blocks
 	Blocks []*message.Block
-
+	BlockMux sync.Mutex
 	// Number of Peers
 	N int
 
@@ -48,6 +49,9 @@ type Blockchain struct {
 	// Voter map
 	VoterMap map[string]bool
 	VoterMapMux sync.Mutex
+
+	// Election Name
+	ElectionName string
 }
 
 
@@ -81,7 +85,9 @@ func (g *Gossiper) NewBlockchain() (bc *Blockchain) {
 		CurrentHash : sha256.Sum256(make([]byte, 0)),
 		CastBallot : nil,
 	}
+	bc.BlockMux.Lock()
 	bc.Blocks = append(bc.Blocks, genesisBlock)
+	bc.BlockMux.Unlock()
 	bc.NextId = 1
 
 	// Set random seed
@@ -94,7 +100,10 @@ func (g *Gossiper) NewBlockchain() (bc *Blockchain) {
 }
 
 func (bc *Blockchain) CheckBlockValidty(b *message.Block) (bool) {
-	return true
+	/* This func returns true if the block's prevhash is the same as
+	the end of current blockchain's hash */
+
+	return bytes.Compare(b.PrevHash[:], bc.Blocks[len(bc.Blocks) - 1].CurrentHash[:]) == 0
 }
 
 func (bc *Blockchain) HandleRound() {
@@ -182,7 +191,9 @@ func (bc *Blockchain) HandleRound() {
 			} else {
 				voters[currentBlock.CastBallot.VoterUuid] = true
 			}
+			bc.BlockMux.Lock()
 			bc.Blocks = append(bc.Blocks, currentBlock)
+			bc.BlockMux.Unlock()
 			fmt.Printf("    APPENDING BLOCK WITH VOTER UID %s, VOTE HASH %s\n", currentBlock.CastBallot.VoterUuid,
 						currentBlock.CastBallot.VoteHash)
 			bc.NextId += 1
@@ -342,5 +353,22 @@ func (g *Gossiper) HandleReceivingVote(v *message.CastBallot) {
 	fmt.Printf("BUFFERING VOTER %s\n", v.VoterUuid)
 	g.Blockchain.Buffer = append(g.Blockchain.Buffer, v)
 	g.Blockchain.BufferMux.Unlock()
+	return
+}
+
+
+func (bc *Blockchain) GetCastBallots() (castBallots []*message.CastBallot) {
+	/*
+	This func returns a slice of pointer to cast ballots
+	*/
+
+	castBallots = make([]*message.CastBallot, bc.NextId - 1)
+	bc.BlockMux.Lock()
+	for i := 1; i < len(bc.Blocks); i += 1{
+
+		castBallots[i - 1] = bc.Blocks[i].CastBallot
+	}
+	bc.BlockMux.Unlock()
+
 	return
 }

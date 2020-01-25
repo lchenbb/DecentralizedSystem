@@ -130,6 +130,8 @@ type WrappedRumorTLCMessage struct {
 /************************ Message for blockchain ************************/
 type CastBallot struct {
 
+	JSON []byte 
+	
 	// CasAt gives the time of the vote
 	CastAt string
 
