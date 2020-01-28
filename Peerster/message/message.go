@@ -3,6 +3,7 @@ package message
 import (
 
 	"net"
+	"fmt"
 	"math/big"
 	"crypto/sha256"
 )
@@ -20,6 +21,7 @@ type Message struct {
 	// Attributes for blockchain
 	Voterid string
 	Vote string
+	ElectionName string
 }
 
 type SimpleMessage struct {
@@ -128,6 +130,7 @@ type WrappedRumorTLCMessage struct {
 }
 
 /************************ Message for blockchain ************************/
+/*
 type CastBallot struct {
 
 	JSON []byte 
@@ -147,7 +150,94 @@ type CastBallot struct {
 	// VoterUuid is the unique identifier of the voter
 	VoterUuid string
 }
+*/
 
+type CastBallot struct {
+
+JSON []byte `json:"-"`
+
+// CastAt gives the time at which Vote was cast.
+
+CastAt string  `json:"cast_at"`
+
+
+
+// Vote is the cast Ballot itself.
+
+Vote *Ballot `json:"vote"`
+
+
+
+// VoteHash is the SHA-256 hash of the JSON corresponding to Vote.
+
+VoteHash string  `json:"vote_hash"`
+
+
+
+// VoterHash is the SHA-256 hash of the Voter JSON corresponding to
+
+// VoterUuid.
+
+VoterHash string  `json:"voter_hash"`
+
+
+
+// VoterUuid is the unique identifier for the Voter that cast Vote.
+
+VoterUuid string  `json:"voter_uuid"`
+
+}
+
+func (cb *CastBallot) BigInt2Str() {
+	/* This func convert bigint in ballot to string */
+
+	for _, answer := range cb.Vote.Answers {
+		// Convert all big int to string
+		answer.ChoicesStr = make([]*CiphertextStr, len(answer.Choices))
+		answer.RandomnessStr = make([]*string, len(answer.Randomness))
+
+		for i, choice := range answer.Choices {
+			answer.ChoicesStr[i] = NewCiphertextStr(choice.Alpha, choice.Beta)
+		}
+		for i, r := range answer.Randomness{
+			// Convert all big int to string in randomness
+			result := r.String()
+			answer.RandomnessStr[i] = &result
+		}
+
+		// Remove all big int pointers
+		answer.Choices = make([]*Ciphertext, 0)
+		answer.Randomness = make([]*big.Int, 0)
+	}
+}
+
+func (cb *CastBallot) Str2BigInt() {
+	/* This func convert string to big int */
+
+	for _, answer := range cb.Vote.Answers {
+		// Convert all string to big int
+		answer.Choices = make([]*Ciphertext, len(answer.ChoicesStr))
+		answer.Randomness = make([]*big.Int, len(answer.RandomnessStr))
+
+		for i, choiceStr := range answer.ChoicesStr {
+			answer.Choices[i] = NewCiphertext(choiceStr.Alpha, choiceStr.Beta)
+		}
+		for i, r := range answer.RandomnessStr{
+			result := new(big.Int)
+			result, err := result.SetString(*r, 10)
+			if err {
+				fmt.Println("Cannot convert randomness str to big int")
+				return
+			}
+			answer.Randomness[i] = result
+		}
+		// Remove all string pointers
+		answer.ChoicesStr = make([]*CiphertextStr, 0)
+		answer.RandomnessStr = make([]*string, 0)
+	}
+
+	return
+}
 // A Ballot is a cryptographic vote in an Election.
 type Ballot struct {
 	// Answers is a list of answers to the Election specified by
@@ -167,6 +257,7 @@ type EncryptedAnswer struct {
 	// Choices is a list of votes for each choice in a Question. Each choice
 	// is encrypted with the Election.PublicKey.
 	Choices []*Ciphertext `json:"choices"`
+	ChoicesStr []*CiphertextStr
 
 	// IndividualProofs gives a proof that each corresponding entry in
 	// Choices is well formed: this means that it is either 0 or 1. So, each
@@ -192,6 +283,7 @@ type EncryptedAnswer struct {
 	// deserialized if not present. This must only be present in a spoiled
 	// ballot because SECRECY.
 	Randomness []*big.Int `json:"randomness,omitempty"`
+	RandomnessStr []*string 
 }
 
 // A Ciphertext is an ElGamal ciphertext, where g is Key.Generator, r is a
@@ -204,6 +296,45 @@ type Ciphertext struct {
 	Beta *big.Int `json:"beta"`
 }
 
+type CiphertextStr struct {
+	Alpha *string
+	Beta *string
+}
+
+func NewCiphertextStr(alpha *big.Int, beta *big.Int) (cs *CiphertextStr) {
+
+	alphaStr := alpha.String()
+	betaStr := beta.String()
+	cs = &CiphertextStr{
+		Alpha: &alphaStr,
+		Beta: &betaStr,
+	}
+	return
+}
+
+func NewCiphertext(alpha, beta *string) (ct *Ciphertext) {
+
+	alphaBigInt := new(big.Int)
+	betaBigInt := new(big.Int)
+
+	alphaBigInt, err := alphaBigInt.SetString(*alpha, 10)
+	if err {
+		fmt.Println("Convert alpha string to big int err")
+		return
+	}
+	betaBigInt, err = betaBigInt.SetString(*beta, 10)
+	if err {
+		fmt.Println("Convert beta string to big int err")
+		return
+	}
+
+	ct = &Ciphertext{
+		Alpha: alphaBigInt,
+		Beta: betaBigInt,
+	}
+
+	return 
+}
 type Block struct {
 
 	// Hash of previous block
@@ -221,6 +352,9 @@ type Block struct {
 	// Source 
 	Origin string
 	
+	// Election Name
+	ElectionName string
+
 	// Ballot
 	CastBallot *CastBallot
 }

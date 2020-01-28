@@ -26,7 +26,14 @@ func (g *Gossiper) MongerRumor(wrappedMessage *message.WrappedRumorTLCMessage, t
 	} else {
 		peerAddr = target
 	}
-
+	if wrappedMessage.BlockRumorMessage != nil {
+		// block := wrappedMessage.BlockRumorMessage.Block
+		// fmt.Printf("PROPOSING BLOCK WITH VOTER %s VOTE %s TO PEER %s FROM %s IN ROUND %d\n", block.CastBallot.VoterUuid,
+		// 																 block.CastBallot.VoteHash,
+		// 																peerAddr,
+		// 																block.Origin,
+		// 																block.Round)
+	}
 	/* Step 2 & 4 */
 	go func() {
 

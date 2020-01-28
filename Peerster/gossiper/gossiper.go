@@ -7,6 +7,7 @@ import (
 	"github.com/LiangweiCHEN/Peerster/network"
 	"github.com/LiangweiCHEN/Peerster/routing"
 	"net"
+	"sync"
 	"time"
 )
 
@@ -51,7 +52,8 @@ type Gossiper struct {
 	Wits				int // Number of threshold witnessed messages
 
 	// Stuff for blockchain
-	Blockchain			*Blockchain
+	Blockchains			map[string]*Blockchain
+	BlockchainsMux		sync.Mutex
 }
 
 // Gossiper start working
@@ -87,7 +89,7 @@ func (gossiper *Gossiper) StartWorking() {
 	go gossiper.HandleTLCAck()
 
 	// Start handling sending candidate blocks
-	go gossiper.HandleSendingBlocks()
+	// go gossiper.HandleSendingBlocks()
 
 	// Start round tlc ack if hw3ex3
 	if gossiper.Hw3ex3 {

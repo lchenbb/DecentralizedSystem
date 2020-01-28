@@ -121,10 +121,14 @@ func (g *Gossiper) HandleClient(msg *message.Message) {
 		fmt.Printf("CLIENT WANT TO SEARCH FOR %s\n", strings.Join(msg.Keywords, ","))
 		g.FileSharer.Searcher.Search(msg.Keywords, int(msg.Budget))
 
-	case msg.Voterid != "" && msg.Vote != "":
+	case msg.Voterid != "" && msg.Vote != "" && msg.ElectionName != "":
 		// Handle vote
-		fmt.Printf("CLIENT SEND VOTE FROM %s WITH CONTENT %s\n", msg.Voterid, msg.Vote)
-		v := g.Blockchain.CreateBallot(msg.Voterid, msg.Vote)
+		fmt.Printf("CLIENT SEND VOTE FROM %s WITH CONTENT %s IN ELECTION %s\n", msg.Voterid,
+																				msg.Vote,
+																				msg.ElectionName)
+		// Create the blockchain if not existed
+		bc := g.GetOrCreateBlockchain(msg.ElectionName)
+		v := bc.CreateBallot(msg.Voterid, msg.Vote, msg.ElectionName)
 		go g.HandleReceivingVote(v)
 	}
 }
